@@ -1,0 +1,17 @@
+{
+  "name": "discord-login",
+  "version": "1.0.0",
+  "description": "Sistema de licenças Discord + API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "discord.js": "^14.25.1",
+    "express": "^5.2.1"
+  }
+}
