@@ -42,7 +42,7 @@ function saveBlacklist(data) {
 
 // ================= LOG EMBED =================
 
-async function sendLog(id, action, authorTag) {
+async function sendLogEmbed(id, action, authorTag) {
     try {
         const channel = await client.channels.fetch(LOG_CHANNEL_ID);
         if (!channel) return;
@@ -56,11 +56,11 @@ async function sendLog(id, action, authorTag) {
 
         const embed = new EmbedBuilder()
             .setTitle(action)
-            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
+            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true, size: 512 }))
             .addFields(
                 { name: "👤 Usuário", value: `<@${id}>`, inline: true },
                 { name: "🆔 ID", value: id, inline: true },
-                { name: "👮 Por", value: authorTag }
+                { name: "👮 Executado por", value: authorTag }
             )
             .setColor(0xff9900)
             .setTimestamp();
@@ -129,11 +129,11 @@ client.on('messageCreate', async (message) => {
             saveDatabase(database);
 
             message.reply(`✅ ID ${id} adicionado.`);
-            sendLog(id, "🟢 ADD", message.author.tag);
+            sendLogEmbed(id, "🟢 ADD", message.author.tag);
             return;
         }
 
-        // ================= LISTAR (EMBED) =================
+        // ================= LISTAR =================
 
         if (command === '!listar') {
 
@@ -142,6 +142,8 @@ client.on('messageCreate', async (message) => {
 
             if (database.length === 0)
                 return message.reply("📭 Nenhum ID ativo.");
+
+            const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
 
             for (const user of database) {
 
@@ -164,17 +166,22 @@ client.on('messageCreate', async (message) => {
 
                 const embed = new EmbedBuilder()
                     .setTitle("📋 ID Ativo")
-                    .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
+                    .setThumbnail(discordUser.displayAvatarURL({ dynamic: true, size: 512 }))
                     .addFields(
                         { name: "👤 Usuário", value: `<@${user.id}>`, inline: true },
                         { name: "🆔 ID", value: user.id, inline: true },
                         { name: "📅 Tempo", value: dias, inline: true },
                         { name: "💻 HWID", value: user.hwid || "Não definido" }
                     )
-                    .setColor(0x00ff00)
+                    .setColor(0x2ecc71)
                     .setTimestamp();
 
                 await message.channel.send({ embeds: [embed] });
+
+                // envia também no canal de logs
+                if (logChannel) {
+                    await logChannel.send({ embeds: [embed] });
+                }
             }
 
             return;
@@ -197,7 +204,7 @@ client.on('messageCreate', async (message) => {
             saveDatabase(database);
 
             message.reply(`🔄 HWID resetado para ${id}`);
-            sendLog(id, "🔄 RESETHWID", message.author.tag);
+            sendLogEmbed(id, "🔄 RESETHWID", message.author.tag);
             return;
         }
 
@@ -221,7 +228,7 @@ client.on('messageCreate', async (message) => {
             saveBlacklist(blacklist);
 
             message.reply(`🚫 ID ${id} desautorizado.`);
-            sendLog(id, "🔴 DESAUTORIZAR", message.author.tag);
+            sendLogEmbed(id, "🔴 DESAUTORIZAR", message.author.tag);
             return;
         }
 
