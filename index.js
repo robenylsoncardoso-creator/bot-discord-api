@@ -42,159 +42,196 @@ function saveBlacklist(data) {
 
 // ================= LOG =================
 
-async function sendLog(message) {
+async function sendLog(msg) {
     try {
         const channel = await client.channels.fetch(LOG_CHANNEL_ID);
-        if (channel) channel.send(message);
-    } catch {}
+        if (channel) channel.send(msg);
+    } catch (err) {
+        console.log("Erro ao enviar log:", err);
+    }
 }
 
 // ================= COMANDOS =================
 
 client.on('messageCreate', async (message) => {
 
-    if (message.author.bot) return;
-    if (!message.content.startsWith('!')) return;
-    if (message.channel.id !== ALLOWED_CHANNEL_ID) return;
+    try {
 
-    const hasPermission =
-        message.member.roles.cache.has(ROLE_1) ||
-        message.member.roles.cache.has(ROLE_2);
+        if (message.author.bot) return;
+        if (!message.content.startsWith('!')) return;
+        if (message.channel.id !== ALLOWED_CHANNEL_ID) return;
 
-    const args = message.content.split(' ');
-    const command = args[0].toLowerCase();
+        const hasPermission =
+            message.member.roles.cache.has(ROLE_1) ||
+            message.member.roles.cache.has(ROLE_2);
 
-    let database = loadDatabase();
-    let blacklist = loadBlacklist();
+        const args = message.content.trim().split(/\s+/);
+        const command = args[0].toLowerCase();
 
-    // ================= ADD =================
+        let database = loadDatabase();
+        let blacklist = loadBlacklist();
 
-    if (command === '!add') {
+        // ================= ADD =================
 
-        if (!hasPermission)
-            return message.reply("❌ Sem permissão.");
+        if (command === '!add') {
 
-        const id = args[1];
-        const tempo = args[2];
+            if (!hasPermission)
+                return message.reply("❌ Sem permissão.");
 
-        if (!id || !tempo)
-            return message.reply("Use: !add ID DIAS ou !add ID life");
+            const id = args[1];
+            const tempo = args[2];
 
-        let expires;
+            if (!id || !tempo)
+                return message.reply("Use: !add ID DIAS ou !add ID life");
 
-        if (tempo.toLowerCase() === "life") {
-            expires = "life";
-        } else {
-            const dias = parseInt(tempo);
-            if (isNaN(dias)) return message.reply("Tempo inválido.");
+            let expires;
 
-            const data = new Date();
-            data.setDate(data.getDate() + dias);
-            expires = data.toISOString();
+            if (tempo.toLowerCase() === "life") {
+                expires = "life";
+            } else {
+                const dias = parseInt(tempo);
+                if (isNaN(dias)) return message.reply("Tempo inválido.");
+
+                const data = new Date();
+                data.setDate(data.getDate() + dias);
+                expires = data.toISOString();
+            }
+
+            database = database.filter(u => u.id !== id);
+
+            database.push({
+                id,
+                expires,
+                hwid: null
+            });
+
+            saveDatabase(database);
+
+            message.reply(`✅ ID ${id} adicionado.`);
+            sendLog(`🟢 ADD: ${id} | Tempo: ${tempo} | Por: ${message.author.tag}`);
+            return;
         }
 
-        database = database.filter(u => u.id !== id);
+        // ================= LISTAR =================
 
-        database.push({
-            id,
-            expires,
-            hwid: null
-        });
+        if (command === '!listar') {
 
-        saveDatabase(database);
+            if (!hasPermission)
+                return message.reply("❌ Sem permissão.");
 
-        message.reply(`✅ ID ${id} adicionado.`);
-        sendLog(`🟢 ADD: ${id} | Tempo: ${tempo} | Por: ${message.author.tag}`);
-        return;
-    }
+            if (database.length === 0)
+                return message.reply("📭 Nenhum ID ativo.");
 
-    // ================= INFO =================
+            let lista = database.map(user => {
 
-    if (command === '!info') {
+                let dias = "Vitalício";
 
-        if (!hasPermission)
-            return message.reply("❌ Sem permissão.");
+                if (user.expires !== "life") {
+                    const now = new Date();
+                    const expireDate = new Date(user.expires);
+                    let diasRestantes = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24));
+                    if (diasRestantes < 1) diasRestantes = 1;
+                    dias = `${diasRestantes} dias`;
+                }
 
-        const id = args[1];
-        if (!id) return message.reply("Use: !info ID");
+                return `🆔 ${user.id} | 📅 ${dias} | 💻 ${user.hwid || "Sem HWID"}`;
 
-        const user = database.find(u => u.id === id);
-        if (!user) return message.reply("ID não encontrado.");
+            }).join("\n");
 
-        let dias = "Vitalício";
-
-        if (user.expires !== "life") {
-            const now = new Date();
-            const expireDate = new Date(user.expires);
-            let diasRestantes = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24));
-            if (diasRestantes < 1) diasRestantes = 1;
-            dias = `${diasRestantes} dias`;
+            message.reply(`📋 IDS ATIVOS:\n\n${lista}`);
+            return;
         }
 
-        message.reply(`🆔 ${id}\n📅 ${dias}\n💻 HWID: ${user.hwid || "Não definido"}`);
-        return;
-    }
+        // ================= INFO =================
 
-    // ================= RESETHWID =================
+        if (command === '!info') {
 
-    if (command === '!resethwid') {
+            if (!hasPermission)
+                return message.reply("❌ Sem permissão.");
 
-        if (!hasPermission)
-            return message.reply("❌ Sem permissão.");
+            const id = args[1];
+            if (!id) return message.reply("Use: !info ID");
 
-        const id = args[1];
-        if (!id) return message.reply("Use: !resethwid ID");
+            const user = database.find(u => u.id === id);
+            if (!user) return message.reply("ID não encontrado.");
 
-        const user = database.find(u => u.id === id);
-        if (!user) return message.reply("ID não encontrado.");
+            let dias = "Vitalício";
 
-        user.hwid = null;
-        saveDatabase(database);
+            if (user.expires !== "life") {
+                const now = new Date();
+                const expireDate = new Date(user.expires);
+                let diasRestantes = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24));
+                if (diasRestantes < 1) diasRestantes = 1;
+                dias = `${diasRestantes} dias`;
+            }
 
-        message.reply(`🔄 HWID resetado para ${id}`);
-        sendLog(`🔄 RESETHWID: ${id} | Por: ${message.author.tag}`);
-        return;
-    }
-
-    // ================= RESETTODOS =================
-
-    if (command === '!resettodos') {
-
-        if (!hasPermission)
-            return message.reply("❌ Sem permissão.");
-
-        database.forEach(u => u.hwid = null);
-        saveDatabase(database);
-
-        message.reply("🔄 Todos HWIDs foram resetados.");
-        sendLog(`🔄 RESET TODOS | Por: ${message.author.tag}`);
-        return;
-    }
-
-    // ================= DESAUTORIZAR =================
-
-    if (command === '!desautorizar') {
-
-        if (!hasPermission)
-            return message.reply("❌ Sem permissão.");
-
-        const id = args[1];
-        if (!id) return message.reply("Use: !desautorizar ID");
-
-        database = database.filter(u => u.id !== id);
-
-        if (!blacklist.includes(id)) {
-            blacklist.push(id);
+            message.reply(`🆔 ${id}\n📅 ${dias}\n💻 HWID: ${user.hwid || "Não definido"}`);
+            return;
         }
 
-        saveDatabase(database);
-        saveBlacklist(blacklist);
+        // ================= RESETHWID =================
 
-        message.reply(`🚫 ID ${id} desautorizado.`);
-        sendLog(`🔴 DESAUTORIZAR: ${id} | Por: ${message.author.tag}`);
-        return;
+        if (command === '!resethwid') {
+
+            if (!hasPermission)
+                return message.reply("❌ Sem permissão.");
+
+            const id = args[1];
+            if (!id) return message.reply("Use: !resethwid ID");
+
+            const user = database.find(u => u.id === id);
+            if (!user) return message.reply("ID não encontrado.");
+
+            user.hwid = null;
+            saveDatabase(database);
+
+            message.reply(`🔄 HWID resetado para ${id}`);
+            sendLog(`🔄 RESETHWID: ${id} | Por: ${message.author.tag}`);
+            return;
+        }
+
+        // ================= RESETTODOS =================
+
+        if (command === '!resettodos') {
+
+            if (!hasPermission)
+                return message.reply("❌ Sem permissão.");
+
+            database.forEach(u => u.hwid = null);
+            saveDatabase(database);
+
+            message.reply("🔄 Todos HWIDs foram resetados.");
+            sendLog(`🔄 RESET TODOS | Por: ${message.author.tag}`);
+            return;
+        }
+
+        // ================= DESAUTORIZAR =================
+
+        if (command === '!desautorizar') {
+
+            if (!hasPermission)
+                return message.reply("❌ Sem permissão.");
+
+            const id = args[1];
+            if (!id) return message.reply("Use: !desautorizar ID");
+
+            database = database.filter(u => u.id !== id);
+
+            if (!blacklist.includes(id)) {
+                blacklist.push(id);
+            }
+
+            saveDatabase(database);
+            saveBlacklist(blacklist);
+
+            message.reply(`🚫 ID ${id} desautorizado.`);
+            sendLog(`🔴 DESAUTORIZAR: ${id} | Por: ${message.author.tag}`);
+            return;
+        }
+
+    } catch (err) {
+        console.log("Erro em messageCreate:", err);
     }
-
 });
 
 // ================= API CHECK =================
@@ -208,16 +245,13 @@ app.get('/check/:id/:hwid', (req, res) => {
         const database = loadDatabase();
         const blacklist = loadBlacklist();
 
-        if (blacklist.includes(id)) {
+        if (blacklist.includes(id))
             return res.send("pc_blocked");
-        }
 
         const user = database.find(u => u.id === id);
-        if (!user) {
+        if (!user)
             return res.send("false");
-        }
 
-        // ===== LIFE =====
         if (user.expires === "life") {
 
             if (!user.hwid) {
@@ -225,30 +259,25 @@ app.get('/check/:id/:hwid', (req, res) => {
                 saveDatabase(database);
             }
 
-            if (user.hwid !== hwid) {
+            if (user.hwid !== hwid)
                 return res.send("pc_blocked");
-            }
 
             return res.send("true|9999");
         }
 
-        // ===== DATA NORMAL =====
-
         const now = new Date();
         const expireDate = new Date(user.expires);
 
-        if (expireDate < now) {
+        if (expireDate < now)
             return res.send("expired");
-        }
 
         if (!user.hwid) {
             user.hwid = hwid;
             saveDatabase(database);
         }
 
-        if (user.hwid !== hwid) {
+        if (user.hwid !== hwid)
             return res.send("pc_blocked");
-        }
 
         let diasRestantes = Math.ceil(
             (expireDate - now) / (1000 * 60 * 60 * 24)
@@ -262,7 +291,6 @@ app.get('/check/:id/:hwid', (req, res) => {
         console.log("Erro na API:", err);
         return res.send("false");
     }
-
 });
 
 // ================= ROOT =================
@@ -275,7 +303,7 @@ app.listen(PORT, () => {
     console.log(`API rodando na porta ${PORT}`);
 });
 
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`Bot online como ${client.user.tag}`);
 });
 
