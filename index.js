@@ -143,8 +143,6 @@ client.on('messageCreate', async (message) => {
             if (database.length === 0)
                 return message.reply("📭 Nenhum ID ativo.");
 
-            const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
-
             for (const user of database) {
 
                 let dias = "Vitalício";
@@ -177,13 +175,54 @@ client.on('messageCreate', async (message) => {
                     .setTimestamp();
 
                 await message.channel.send({ embeds: [embed] });
-
-                // envia também no canal de logs
-                if (logChannel) {
-                    await logChannel.send({ embeds: [embed] });
-                }
             }
 
+            return;
+        }
+
+        // ================= INFO =================
+
+        if (command === '!info') {
+
+            if (!hasPermission)
+                return message.reply("❌ Sem permissão.");
+
+            const id = args[1];
+            if (!id) return message.reply("Use: !info ID");
+
+            const user = database.find(u => u.id === id);
+            if (!user) return message.reply("ID não encontrado.");
+
+            let dias = "Vitalício";
+
+            if (user.expires !== "life") {
+                const now = new Date();
+                const expireDate = new Date(user.expires);
+                let diasRestantes = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24));
+                if (diasRestantes < 1) diasRestantes = 1;
+                dias = `${diasRestantes} dias`;
+            }
+
+            let discordUser;
+            try {
+                discordUser = await client.users.fetch(id);
+            } catch {
+                return message.reply("Usuário não encontrado.");
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle("🔎 Informações do ID")
+                .setThumbnail(discordUser.displayAvatarURL({ dynamic: true, size: 512 }))
+                .addFields(
+                    { name: "👤 Usuário", value: `<@${id}>`, inline: true },
+                    { name: "🆔 ID", value: id, inline: true },
+                    { name: "📅 Tempo", value: dias, inline: true },
+                    { name: "💻 HWID", value: user.hwid || "Não definido" }
+                )
+                .setColor(0x3498db)
+                .setTimestamp();
+
+            message.channel.send({ embeds: [embed] });
             return;
         }
 
@@ -205,6 +244,32 @@ client.on('messageCreate', async (message) => {
 
             message.reply(`🔄 HWID resetado para ${id}`);
             sendLogEmbed(id, "🔄 RESETHWID", message.author.tag);
+            return;
+        }
+
+        // ================= RESETTODOS =================
+
+        if (command === '!resettodos') {
+
+            if (!hasPermission)
+                return message.reply("❌ Sem permissão.");
+
+            database.forEach(u => u.hwid = null);
+            saveDatabase(database);
+
+            message.reply("🔄 Todos HWIDs foram resetados.");
+
+            const embed = new EmbedBuilder()
+                .setTitle("🔄 RESET TODOS")
+                .setDescription(`Executado por: ${message.author.tag}`)
+                .setColor(0xe74c3c)
+                .setTimestamp();
+
+            const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+            if (logChannel) {
+                logChannel.send({ embeds: [embed] });
+            }
+
             return;
         }
 
