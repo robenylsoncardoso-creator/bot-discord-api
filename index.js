@@ -302,6 +302,72 @@ client.on('messageCreate', async (message) => {
     }
 });
 
+// ================= API CHECK =================
+
+app.get('/check/:id/:hwid', async (req, res) => {
+
+    try {
+
+        const { id, hwid } = req.params;
+
+        let database = loadDatabase();
+        let blacklist = loadBlacklist();
+
+        if (blacklist.includes(id))
+            return res.send("pc_blocked");
+
+        const user = database.find(u => u.id === id);
+        if (!user)
+            return res.send("false");
+
+        let username = id;
+
+        try {
+            const discordUser = await client.users.fetch(id);
+            username = discordUser.username;
+        } catch {}
+
+        if (user.expires === "life") {
+
+            if (!user.hwid) {
+                user.hwid = hwid;
+                saveDatabase(database);
+            }
+
+            if (user.hwid !== hwid)
+                return res.send("pc_blocked");
+
+            return res.send(`true|9999|${username}`);
+        }
+
+        const now = new Date();
+        const expireDate = new Date(user.expires);
+
+        if (expireDate < now)
+            return res.send("expired");
+
+        if (!user.hwid) {
+            user.hwid = hwid;
+            saveDatabase(database);
+        }
+
+        if (user.hwid !== hwid)
+            return res.send("pc_blocked");
+
+        let diasRestantes = Math.ceil(
+            (expireDate - now) / (1000 * 60 * 60 * 24)
+        );
+
+        if (diasRestantes < 1) diasRestantes = 1;
+
+        return res.send(`true|${diasRestantes}|${username}`);
+
+    } catch (err) {
+        console.log("Erro na API:", err);
+        return res.send("false");
+    }
+});
+
 // ================= ROOT =================
 
 app.get('/', (req, res) => {
