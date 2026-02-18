@@ -236,7 +236,7 @@ client.on('messageCreate', async (message) => {
 
 // ================= API CHECK =================
 
-app.get('/check/:id/:hwid', (req, res) => {
+app.get('/check/:id/:hwid', async (req, res) => {
 
     try {
 
@@ -252,6 +252,18 @@ app.get('/check/:id/:hwid', (req, res) => {
         if (!user)
             return res.send("false");
 
+        // 🔎 Buscar usuário no Discord
+        let username = id;
+
+        try {
+            const discordUser = await client.users.fetch(id);
+            username = discordUser.username;
+        } catch {
+            username = id;
+        }
+
+        // ================= VITALICIO =================
+
         if (user.expires === "life") {
 
             if (!user.hwid) {
@@ -262,8 +274,10 @@ app.get('/check/:id/:hwid', (req, res) => {
             if (user.hwid !== hwid)
                 return res.send("pc_blocked");
 
-            return res.send("true|9999");
+            return res.send(`true|9999|${username}`);
         }
+
+        // ================= DATA NORMAL =================
 
         const now = new Date();
         const expireDate = new Date(user.expires);
@@ -285,7 +299,7 @@ app.get('/check/:id/:hwid', (req, res) => {
 
         if (diasRestantes < 1) diasRestantes = 1;
 
-        return res.send(`true|${diasRestantes}`);
+        return res.send(`true|${diasRestantes}|${username}`);
 
     } catch (err) {
         console.log("Erro na API:", err);
