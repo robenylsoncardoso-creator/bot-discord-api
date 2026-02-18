@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const fs = require('fs');
 const express = require('express');
 
@@ -40,12 +40,33 @@ function saveBlacklist(data) {
     fs.writeFileSync("blacklist.json", JSON.stringify(data, null, 2));
 }
 
-// ================= LOG =================
+// ================= LOG EMBED =================
 
-async function sendLog(msg) {
+async function sendLog(id, action, authorTag) {
     try {
         const channel = await client.channels.fetch(LOG_CHANNEL_ID);
-        if (channel) channel.send(msg);
+        if (!channel) return;
+
+        let discordUser;
+        try {
+            discordUser = await client.users.fetch(id);
+        } catch {
+            return channel.send(`⚠️ ${action} | ID: ${id} | Por: ${authorTag}`);
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(action)
+            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
+            .addFields(
+                { name: "👤 Usuário", value: `<@${id}>`, inline: true },
+                { name: "🆔 ID", value: id, inline: true },
+                { name: "👮 Por", value: authorTag }
+            )
+            .setColor(0xff9900)
+            .setTimestamp();
+
+        channel.send({ embeds: [embed] });
+
     } catch (err) {
         console.log("Erro ao enviar log:", err);
     }
@@ -108,11 +129,11 @@ client.on('messageCreate', async (message) => {
             saveDatabase(database);
 
             message.reply(`✅ ID ${id} adicionado.`);
-            sendLog(`🟢 ADD: ${id} | Tempo: ${tempo} | Por: ${message.author.tag}`);
+            sendLog(id, "🟢 ADD", message.author.tag);
             return;
         }
 
-        // ================= LISTAR =================
+        // ================= LISTAR (EMBED) =================
 
         if (command === '!listar') {
 
@@ -122,7 +143,7 @@ client.on('messageCreate', async (message) => {
             if (database.length === 0)
                 return message.reply("📭 Nenhum ID ativo.");
 
-            let lista = database.map(user => {
+            for (const user of database) {
 
                 let dias = "Vitalício";
 
@@ -134,38 +155,28 @@ client.on('messageCreate', async (message) => {
                     dias = `${diasRestantes} dias`;
                 }
 
-                return `🆔 ${user.id} | 📅 ${dias} | 💻 ${user.hwid || "Sem HWID"}`;
+                let discordUser;
+                try {
+                    discordUser = await client.users.fetch(user.id);
+                } catch {
+                    continue;
+                }
 
-            }).join("\n");
+                const embed = new EmbedBuilder()
+                    .setTitle("📋 ID Ativo")
+                    .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
+                    .addFields(
+                        { name: "👤 Usuário", value: `<@${user.id}>`, inline: true },
+                        { name: "🆔 ID", value: user.id, inline: true },
+                        { name: "📅 Tempo", value: dias, inline: true },
+                        { name: "💻 HWID", value: user.hwid || "Não definido" }
+                    )
+                    .setColor(0x00ff00)
+                    .setTimestamp();
 
-            message.reply(`📋 IDS ATIVOS:\n\n${lista}`);
-            return;
-        }
-
-        // ================= INFO =================
-
-        if (command === '!info') {
-
-            if (!hasPermission)
-                return message.reply("❌ Sem permissão.");
-
-            const id = args[1];
-            if (!id) return message.reply("Use: !info ID");
-
-            const user = database.find(u => u.id === id);
-            if (!user) return message.reply("ID não encontrado.");
-
-            let dias = "Vitalício";
-
-            if (user.expires !== "life") {
-                const now = new Date();
-                const expireDate = new Date(user.expires);
-                let diasRestantes = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24));
-                if (diasRestantes < 1) diasRestantes = 1;
-                dias = `${diasRestantes} dias`;
+                await message.channel.send({ embeds: [embed] });
             }
 
-            message.reply(`🆔 ${id}\n📅 ${dias}\n💻 HWID: ${user.hwid || "Não definido"}`);
             return;
         }
 
@@ -186,22 +197,7 @@ client.on('messageCreate', async (message) => {
             saveDatabase(database);
 
             message.reply(`🔄 HWID resetado para ${id}`);
-            sendLog(`🔄 RESETHWID: ${id} | Por: ${message.author.tag}`);
-            return;
-        }
-
-        // ================= RESETTODOS =================
-
-        if (command === '!resettodos') {
-
-            if (!hasPermission)
-                return message.reply("❌ Sem permissão.");
-
-            database.forEach(u => u.hwid = null);
-            saveDatabase(database);
-
-            message.reply("🔄 Todos HWIDs foram resetados.");
-            sendLog(`🔄 RESET TODOS | Por: ${message.author.tag}`);
+            sendLog(id, "🔄 RESETHWID", message.author.tag);
             return;
         }
 
@@ -225,85 +221,12 @@ client.on('messageCreate', async (message) => {
             saveBlacklist(blacklist);
 
             message.reply(`🚫 ID ${id} desautorizado.`);
-            sendLog(`🔴 DESAUTORIZAR: ${id} | Por: ${message.author.tag}`);
+            sendLog(id, "🔴 DESAUTORIZAR", message.author.tag);
             return;
         }
 
     } catch (err) {
         console.log("Erro em messageCreate:", err);
-    }
-});
-
-// ================= API CHECK =================
-
-app.get('/check/:id/:hwid', async (req, res) => {
-
-    try {
-
-        const { id, hwid } = req.params;
-
-        const database = loadDatabase();
-        const blacklist = loadBlacklist();
-
-        if (blacklist.includes(id))
-            return res.send("pc_blocked");
-
-        const user = database.find(u => u.id === id);
-        if (!user)
-            return res.send("false");
-
-        // 🔎 Buscar usuário no Discord
-        let username = id;
-
-        try {
-            const discordUser = await client.users.fetch(id);
-            username = discordUser.username;
-        } catch {
-            username = id;
-        }
-
-        // ================= VITALICIO =================
-
-        if (user.expires === "life") {
-
-            if (!user.hwid) {
-                user.hwid = hwid;
-                saveDatabase(database);
-            }
-
-            if (user.hwid !== hwid)
-                return res.send("pc_blocked");
-
-            return res.send(`true|9999|${username}`);
-        }
-
-        // ================= DATA NORMAL =================
-
-        const now = new Date();
-        const expireDate = new Date(user.expires);
-
-        if (expireDate < now)
-            return res.send("expired");
-
-        if (!user.hwid) {
-            user.hwid = hwid;
-            saveDatabase(database);
-        }
-
-        if (user.hwid !== hwid)
-            return res.send("pc_blocked");
-
-        let diasRestantes = Math.ceil(
-            (expireDate - now) / (1000 * 60 * 60 * 24)
-        );
-
-        if (diasRestantes < 1) diasRestantes = 1;
-
-        return res.send(`true|${diasRestantes}|${username}`);
-
-    } catch (err) {
-        console.log("Erro na API:", err);
-        return res.send("false");
     }
 });
 
