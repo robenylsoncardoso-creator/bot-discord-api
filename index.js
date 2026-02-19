@@ -19,11 +19,8 @@ const ROLE_1 = "1470795209993490514";
 const ROLE_2 = "1470795209234448561";
 const ALLOWED_CHANNEL_ID = "1473023470861291600";
 
-// 🔐 Canal apenas para LOGIN
 const LOGIN_LOG_CHANNEL_ID = "1473909156250386484";
-
-// 📦 Canal apenas para comandos administrativos
-const COMMAND_LOG_CHANNEL_ID = "COLOQUE_AQUI_ID_DO_CANAL_DE_COMANDOS";
+const COMMAND_LOG_CHANNEL_ID = "1473909156250386484";
 
 const OWNER_ID = "1464438974411051252";
 const OWNER_FIXED_IP = "***.***.***.**";
@@ -58,12 +55,13 @@ async function sendCommandLog(title, description, color = 0x3498db) {
             .setTimestamp();
 
         await channel.send({ embeds: [embed] });
+
     } catch (err) {
         console.log("Erro log comando:", err);
     }
 }
 
-// ================= LOG LOGIN =================
+// ================= LOGIN LOG =================
 
 async function sendLoginLog(id, produto, hwid, dias, realIp, status = "SUCESSO") {
     try {
@@ -80,7 +78,17 @@ async function sendLoginLog(id, produto, hwid, dias, realIp, status = "SUCESSO")
 
         if (discordUser) {
             embed.setThumbnail(discordUser.displayAvatarURL({ dynamic: true }));
-            embed.addFields({ name: "👤 Usuário", value: `${discordUser.username} (<@${id}>)`, inline: true });
+            embed.addFields({
+                name: "👤 Usuário",
+                value: `${discordUser.username} (<@${id}>)`,
+                inline: true
+            });
+        } else {
+            embed.addFields({
+                name: "👤 Usuário",
+                value: id,
+                inline: true
+            });
         }
 
         embed.addFields(
@@ -89,8 +97,13 @@ async function sendLoginLog(id, produto, hwid, dias, realIp, status = "SUCESSO")
             { name: "🌐 IP", value: ipToShow }
         );
 
-        if (dias !== null)
-            embed.addFields({ name: "⏳ Dias Restantes", value: dias.toString(), inline: true });
+        if (dias !== null && dias !== undefined) {
+            embed.addFields({
+                name: "⏳ Dias Restantes",
+                value: dias.toString(),
+                inline: true
+            });
+        }
 
         await channel.send({ embeds: [embed] });
 
@@ -116,12 +129,14 @@ client.on('messageCreate', async (message) => {
 
     let database = loadDatabase();
 
-    if (!hasPermission) return;
-
     // ================= !ADD =================
     if (command === '!add') {
 
+        if (!hasPermission)
+            return message.reply("Sem permissão.");
+
         const [ , id, produto, tempo ] = args;
+
         if (!id || !produto || !tempo)
             return message.reply("Use: !add ID produto dias|life");
 
@@ -131,6 +146,7 @@ client.on('messageCreate', async (message) => {
             expires = "life";
         } else {
             const dias = parseInt(tempo);
+
             if (isNaN(dias) || dias <= 0)
                 return message.reply("Dias inválidos.");
 
@@ -140,6 +156,7 @@ client.on('messageCreate', async (message) => {
         }
 
         let user = database.find(u => u.id === id);
+
         if (!user) {
             user = { id, produtos: {} };
             database.push(user);
@@ -164,74 +181,14 @@ client.on('messageCreate', async (message) => {
         return message.reply(`Produto ${produto} adicionado para <@${id}>`);
     }
 
-    // ================= !RENOVAR =================
-    if (command === '!renovar') {
-        const [ , id, produto, diasAdd ] = args;
-        const dias = parseInt(diasAdd);
-
-        let user = database.find(u => u.id === id);
-        if (!user || !user.produtos[produto])
-            return message.reply("Não encontrado.");
-
-        const data = new Date(user.produtos[produto].expires === "life" ? new Date() : user.produtos[produto].expires);
-        data.setDate(data.getDate() + dias);
-        user.produtos[produto].expires = data.toISOString();
-
-        saveDatabase(database);
-
-        await sendCommandLog(
-            "🔄 PRODUTO RENOVADO",
-            `👤 <@${id}>\n📦 ${produto}\n⏳ +${dias} dias`,
-            0x3498db
-        );
-
-        return message.reply("Renovado com sucesso.");
-    }
-
-    // ================= !REMOVER =================
-    if (command === '!remover') {
-        const [ , id, produto ] = args;
-
-        let user = database.find(u => u.id === id);
-        if (!user || !user.produtos[produto])
-            return message.reply("Não encontrado.");
-
-        delete user.produtos[produto];
-        saveDatabase(database);
-
-        await sendCommandLog(
-            "❌ PRODUTO REMOVIDO",
-            `👤 <@${id}>\n📦 ${produto}`,
-            0xe74c3c
-        );
-
-        return message.reply("Produto removido.");
-    }
-
-    // ================= !RESETARHWID =================
-    if (command === '!resetarhwid') {
-        const [ , id, produto ] = args;
-
-        let user = database.find(u => u.id === id);
-        if (!user || !user.produtos[produto])
-            return message.reply("Não encontrado.");
-
-        user.produtos[produto].hwid = null;
-        saveDatabase(database);
-
-        await sendCommandLog(
-            "♻️ HWID RESETADO",
-            `👤 <@${id}>\n📦 ${produto}`,
-            0xf1c40f
-        );
-
-        return message.reply("HWID resetado.");
-    }
-
     // ================= !RESETTODOS =================
     if (command === '!resettodos') {
 
+        if (!hasPermission)
+            return message.reply("Sem permissão.");
+
         for (const user of database) {
+            user = migrateUser(user);
             for (const produto in user.produtos) {
                 user.produtos[produto].hwid = null;
             }
@@ -240,49 +197,92 @@ client.on('messageCreate', async (message) => {
         saveDatabase(database);
 
         await sendCommandLog(
-            "♻️ RESET GLOBAL",
-            `Executado por <@${message.author.id}>`,
+            "♻️ RESET GLOBAL DE HWID",
+            `Todos HWIDs foram resetados por <@${message.author.id}>`,
             0xe67e22
         );
 
         return message.reply("Todos HWIDs resetados.");
     }
 
-    // ================= !INFO =================
-    if (command === '!info') {
+});
 
-        const id = args[1];
+// ================= API =================
+
+app.get('/check/:id/:hwid/:produto', async (req, res) => {
+
+    try {
+
+        const { id, hwid, produto } = req.params;
+        const realIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+        let database = loadDatabase();
         let user = database.find(u => u.id === id);
-        if (!user) return message.reply("ID não encontrado.");
 
-        user = migrateUser(user);
+        const discordUser = await client.users.fetch(id).catch(() => null);
+        const username = discordUser ? discordUser.username : id;
 
-        const discordUser = await client.users.fetch(id);
-
-        const embed = new EmbedBuilder()
-            .setTitle("🔎 Informações do Cliente")
-            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
-            .setColor(0x3498db);
-
-        for (const produto in user.produtos) {
-            const p = user.produtos[produto];
-
-            let dias = "Vitalício";
-            if (p.expires !== "life") {
-                const restante = Math.ceil((new Date(p.expires) - new Date()) / 86400000);
-                dias = restante > 0 ? restante + " dias" : "Expirado";
-            }
-
-            embed.addFields({
-                name: `📦 ${produto}`,
-                value:
-                    `⏳ ${dias}\n` +
-                    `💻 HWID: ${p.hwid || "Não definido"}\n` +
-                    `🕒 Último login: ${p.lastLogin ? new Date(p.lastLogin).toLocaleString("pt-BR") : "Nunca"}`
-            });
+        if (!user) {
+            await sendLoginLog(id, produto, hwid, null, realIp, "ERRO");
+            return res.send("false");
         }
 
-        return message.channel.send({ embeds: [embed] });
+        user = migrateUser(user);
+        const produtoData = user.produtos[produto];
+
+        if (!produtoData) {
+            await sendLoginLog(id, produto, hwid, null, realIp, "ERRO");
+            return res.send("false");
+        }
+
+        if (!produtoData.hwid) {
+            produtoData.hwid = hwid;
+            saveDatabase(database);
+        }
+
+        if (produtoData.hwid !== hwid) {
+            await sendLoginLog(id, produto, hwid, null, realIp, "HWID_ERRADO");
+            return res.send("pc_blocked");
+        }
+
+        if (produtoData.expires !== "life" &&
+            new Date(produtoData.expires) < new Date()) {
+
+            await sendLoginLog(id, produto, hwid, null, realIp, "EXPIRADO");
+            return res.send("expired");
+        }
+
+        produtoData.lastLogin = new Date().toISOString();
+        saveDatabase(database);
+
+        let dias = 9999;
+
+        if (produtoData.expires !== "life") {
+            dias = Math.ceil(
+                (new Date(produtoData.expires) - new Date()) / 86400000
+            );
+            if (dias < 1) dias = 1;
+        }
+
+        await sendLoginLog(id, produto, hwid, dias, realIp, "SUCESSO");
+
+        return res.send(`true|${dias}|${username}`);
+
+    } catch (err) {
+        console.log("Erro na API:", err);
+        return res.send("false");
     }
 
 });
+
+// ================= START =================
+
+app.listen(PORT, () => {
+    console.log(`API rodando na porta ${PORT}`);
+});
+
+client.once('ready', () => {
+    console.log(`Bot online como ${client.user.tag}`);
+});
+
+client.login(process.env.TOKEN);
