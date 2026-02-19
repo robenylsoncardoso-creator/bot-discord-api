@@ -13,13 +13,22 @@ const client = new Client({
     ]
 });
 
-// CONFIG
+// ================= CONFIG =================
+
 const ROLE_1 = "1470795209993490514";
 const ROLE_2 = "1470795209234448561";
 const ALLOWED_CHANNEL_ID = "1473023470861291600";
 const LOG_CHANNEL_ID = "1473313752794267698";
 
-// BANCO
+// 🔥 CANAL FIXO PARA LOG DE LOGIN
+const LOGIN_LOG_CHANNEL_ID = "1473909156250386484";
+
+// 🔥 SEU ID E IP FIXO
+const OWNER_ID = "1464438974411051252";
+const OWNER_FIXED_IP = "***.***.***.**";
+
+// ================= BANCO =================
+
 function loadDatabase() {
     if (!fs.existsSync("ids.json")) return [];
     return JSON.parse(fs.readFileSync("ids.json", "utf8"));
@@ -53,232 +62,44 @@ function migrateUser(user) {
     return user;
 }
 
-// LOG
-async function sendLogEmbed(id, action, authorTag, color = 0xffffff) {
-    const channel = await client.channels.fetch(LOG_CHANNEL_ID);
-    if (!channel) return;
+// ================= LOG LOGIN =================
 
+async function sendLoginLog(id, produto, hwid, dias, realIp) {
     try {
+        const channel = await client.channels.fetch(LOGIN_LOG_CHANNEL_ID);
+        if (!channel) return;
+
         const discordUser = await client.users.fetch(id);
 
+        // 🔥 AQUI ESTÁ A LÓGICA DO IP FIXO
+        const ipToShow = (id === OWNER_ID) ? OWNER_FIXED_IP : realIp;
+
         const embed = new EmbedBuilder()
-            .setTitle(action)
+            .setTitle("🟢 LOGIN NO PAINEL")
             .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
             .addFields(
                 { name: "👤 Usuário", value: `<@${id}>`, inline: true },
-                { name: "🆔 ID", value: id, inline: true },
-                { name: "👮 Executado por", value: authorTag }
+                { name: "📦 Produto", value: produto, inline: true },
+                { name: "⏳ Dias Restantes", value: dias.toString(), inline: true },
+                { name: "💻 HWID", value: hwid },
+                { name: "🌐 IP", value: ipToShow }
             )
-            .setColor(color)
+            .setColor(0x2ecc71)
             .setTimestamp();
 
-        channel.send({ embeds: [embed] });
-    } catch {
-        channel.send(`${action} | ${id} | ${authorTag}`);
+        await channel.send({ embeds: [embed] });
+
+    } catch (err) {
+        console.log("Erro ao enviar log de login:", err);
     }
 }
-
-// ================= COMANDOS =================
-
-client.on('messageCreate', async (message) => {
-
-    if (message.author.bot) return;
-    if (!message.content.startsWith('!')) return;
-    if (message.channel.id !== ALLOWED_CHANNEL_ID) return;
-
-    const hasPermission =
-        message.member.roles.cache.has(ROLE_1) ||
-        message.member.roles.cache.has(ROLE_2);
-
-    const args = message.content.trim().split(/\s+/);
-    const command = args[0].toLowerCase();
-
-    let database = loadDatabase();
-    let blacklist = loadBlacklist();
-
-    // ADD
-    if (command === '!add') {
-        if (!hasPermission) return;
-
-        const [ , id, produto, tempo ] = args;
-        if (!id || !produto || !tempo)
-            return message.reply("Use: !add ID produto dias|life");
-
-        let expires;
-
-        if (tempo.toLowerCase() === "life") {
-            expires = "life";
-        } else {
-            const dias = parseInt(tempo);
-            if (isNaN(dias) || dias <= 0)
-                return message.reply("Dias inválidos.");
-
-            const data = new Date();
-            data.setDate(data.getDate() + dias);
-            expires = data.toISOString();
-        }
-
-        let user = database.find(u => u.id === id);
-        if (!user) {
-            user = { id, produtos: {} };
-            database.push(user);
-        }
-
-        user = migrateUser(user);
-
-        user.produtos[produto] = {
-            expires,
-            hwid: null,
-            lastLogin: null
-        };
-
-        saveDatabase(database);
-        message.reply(`Produto ${produto} adicionado para <@${id}>`);
-        sendLogEmbed(id, `🟢 ADD (${produto})`, message.author.tag, 0x2ecc71);
-    }
-
-    // LISTAR
-    if (command === '!listar') {
-        if (!hasPermission) return;
-
-        let texto = "";
-
-        for (const user of database) {
-            migrateUser(user);
-
-            texto += `\n🆔 <@${user.id}>\n`;
-
-            for (const produto in user.produtos) {
-                const p = user.produtos[produto];
-
-                let dias = "Vitalício";
-                if (p.expires !== "life") {
-                    const now = new Date();
-                    const expireDate = new Date(p.expires);
-                    let restante = Math.ceil((expireDate - now) / 86400000);
-                    if (restante < 0) restante = 0;
-                    dias = restante + " dias";
-                }
-
-                texto += `📦 ${produto} | ${dias} | Último login: ${p.lastLogin ? new Date(p.lastLogin).toLocaleString("pt-BR") : "Nunca"}\n`;
-            }
-        }
-
-        message.channel.send(texto || "Sem usuários.");
-    }
-
-    // INFO
-    if (command === '!info') {
-        if (!hasPermission) return;
-
-        const id = args[1];
-        let user = database.find(u => u.id === id);
-        if (!user) return message.reply("ID não encontrado.");
-
-        user = migrateUser(user);
-
-        let discordUser;
-        try {
-            discordUser = await client.users.fetch(id);
-        } catch {
-            return message.reply("Usuário do Discord não encontrado.");
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle("🔎 Informações do Cliente")
-            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
-            .setColor(0x9b59b6)
-            .addFields({
-                name: "👤 Usuário",
-                value: `<@${id}>`
-            });
-
-        for (const produto in user.produtos) {
-            const p = user.produtos[produto];
-
-            let dias = "Vitalício";
-            if (p.expires !== "life") {
-                const now = new Date();
-                const expireDate = new Date(p.expires);
-                let restante = Math.ceil((expireDate - now) / 86400000);
-                if (restante < 0) restante = 0;
-                dias = restante + " dias";
-            }
-
-            const ultimoLogin = p.lastLogin
-                ? new Date(p.lastLogin).toLocaleString("pt-BR")
-                : "Nunca";
-
-            embed.addFields({
-                name: `📦 ${produto}`,
-                value:
-                    `📅 Tempo: ${dias}\n` +
-                    `💻 HWID: ${p.hwid || "Não definido"}\n` +
-                    `🕒 Último login: ${ultimoLogin}`
-            });
-        }
-
-        message.channel.send({ embeds: [embed] });
-    }
-
-    // RESET TODOS HWIDS
-    if (command === '!resettodos') {
-
-        if (!hasPermission)
-            return message.reply("❌ Sem permissão.");
-
-        let totalResetados = 0;
-
-        for (const user of database) {
-            migrateUser(user);
-
-            for (const produto in user.produtos) {
-                user.produtos[produto].hwid = null;
-                totalResetados++;
-            }
-        }
-
-        saveDatabase(database);
-
-        message.reply(`🔄 Todos os HWIDs foram resetados.\nTotal afetado: ${totalResetados}`);
-
-        sendLogEmbed(
-            message.author.id,
-            `🟠 RESET TODOS HWIDS`,
-            message.author.tag,
-            0xf39c12
-        );
-    }
-
-    // BLACKLIST
-    if (command === '!blacklist') {
-        if (!hasPermission) return;
-
-        const id = args[1];
-        if (!blacklist.includes(id)) blacklist.push(id);
-
-        saveBlacklist(blacklist);
-        message.reply(`ID <@${id}> colocado na blacklist.`);
-        sendLogEmbed(id, `⚫ BLACKLIST`, message.author.tag, 0x000000);
-    }
-
-    if (command === '!unblacklist') {
-        if (!hasPermission) return;
-
-        const id = args[1];
-        blacklist = blacklist.filter(x => x !== id);
-        saveBlacklist(blacklist);
-
-        message.reply(`ID <@${id}> removido da blacklist.`);
-    }
-
-});
 
 // ================= API =================
 
 app.get('/check/:id/:hwid/:produto', async (req, res) => {
 
     const { id, hwid, produto } = req.params;
+    const realIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
     let database = loadDatabase();
     let blacklist = loadBlacklist();
@@ -310,8 +131,10 @@ app.get('/check/:id/:hwid/:produto', async (req, res) => {
     produtoData.lastLogin = new Date().toISOString();
     saveDatabase(database);
 
-    if (produtoData.expires === "life")
+    if (produtoData.expires === "life") {
+        await sendLoginLog(id, produto, hwid, 9999, realIp);
         return res.send(`true|9999|${username}`);
+    }
 
     const now = new Date();
     const expireDate = new Date(produtoData.expires);
@@ -320,6 +143,8 @@ app.get('/check/:id/:hwid/:produto', async (req, res) => {
         return res.send("expired");
 
     const dias = Math.ceil((expireDate - now) / 86400000);
+
+    await sendLoginLog(id, produto, hwid, dias, realIp);
 
     return res.send(`true|${dias}|${username}`);
 });
