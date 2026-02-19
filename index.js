@@ -152,7 +152,7 @@ client.on('messageCreate', async (message) => {
 
 // ================= API CHECK =================
 
-app.get('/check/:id/:hwid/:produto?', async (req, res) => {
+app.get('/check/:id/:hwid/:produto', async (req, res) => {
 
     try {
 
