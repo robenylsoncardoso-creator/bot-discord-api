@@ -20,6 +20,7 @@ const ROLE_2 = "1470795209234448561";
 const ALLOWED_CHANNEL_ID = "1473023470861291600";
 
 const LOGIN_LOG_CHANNEL_ID = "1473909156250386484";
+const COMMAND_LOG_CHANNEL_ID = "1473909156250386484"; // mesmo canal
 
 const OWNER_ID = "1464438974411051252";
 const OWNER_FIXED_IP = "***.***.***.**";
@@ -40,6 +41,26 @@ function migrateUser(user) {
     return user;
 }
 
+// ================= LOG COMANDOS =================
+
+async function sendCommandLog(title, description, color = 0x3498db) {
+    try {
+        const channel = await client.channels.fetch(COMMAND_LOG_CHANNEL_ID);
+        if (!channel) return;
+
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setDescription(description)
+            .setColor(color)
+            .setTimestamp();
+
+        await channel.send({ embeds: [embed] });
+
+    } catch (err) {
+        console.log("Erro log comando:", err);
+    }
+}
+
 // ================= LOGIN LOG =================
 
 async function sendLoginLog(id, produto, hwid, dias, realIp, status = "SUCESSO") {
@@ -47,20 +68,26 @@ async function sendLoginLog(id, produto, hwid, dias, realIp, status = "SUCESSO")
         const channel = await client.channels.fetch(LOGIN_LOG_CHANNEL_ID);
         if (!channel) return;
 
-        const discordUser = await client.users.fetch(id);
+        const discordUser = await client.users.fetch(id).catch(() => null);
         const ipToShow = (id === OWNER_ID) ? OWNER_FIXED_IP : realIp;
 
         const embed = new EmbedBuilder()
-            .setTitle(status === "SUCESSO" ? "🟢 LOGIN NO PAINEL" : "🔴 TENTATIVA BLOQUEADA")
-            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
-            .addFields(
-                { name: "👤 Usuário", value: `<@${id}>`, inline: true },
-                { name: "📦 Produto", value: produto || "N/A", inline: true },
-                { name: "💻 HWID", value: hwid || "N/A" },
-                { name: "🌐 IP", value: ipToShow }
-            )
+            .setTitle(status === "SUCESSO" ? "🟢 LOGIN NO PAINEL" : "🔴 LOGIN BLOQUEADO")
             .setColor(status === "SUCESSO" ? 0x2ecc71 : 0xe74c3c)
             .setTimestamp();
+
+        if (discordUser) {
+            embed.setThumbnail(discordUser.displayAvatarURL({ dynamic: true }));
+            embed.addFields({ name: "👤 Usuário", value: `${discordUser.username} (<@${id}>)`, inline: true });
+        } else {
+            embed.addFields({ name: "👤 Usuário", value: id, inline: true });
+        }
+
+        embed.addFields(
+            { name: "📦 Produto", value: produto || "N/A", inline: true },
+            { name: "💻 HWID", value: hwid || "N/A" },
+            { name: "🌐 IP", value: ipToShow }
+        );
 
         if (dias !== null)
             embed.addFields({ name: "⏳ Dias Restantes", value: dias.toString(), inline: true });
@@ -68,7 +95,7 @@ async function sendLoginLog(id, produto, hwid, dias, realIp, status = "SUCESSO")
         await channel.send({ embeds: [embed] });
 
     } catch (err) {
-        console.log("Erro log:", err);
+        console.log("Erro log login:", err);
     }
 }
 
@@ -89,7 +116,7 @@ client.on('messageCreate', async (message) => {
 
     let database = loadDatabase();
 
-    // !add
+    // ================= !ADD =================
     if (command === '!add') {
         if (!hasPermission) return message.reply("Sem permissão.");
 
@@ -126,57 +153,17 @@ client.on('messageCreate', async (message) => {
         };
 
         saveDatabase(database);
+
+        await sendCommandLog(
+            "📥 PRODUTO ADICIONADO",
+            `👤 <@${id}>\n📦 Produto: ${produto}\n⏳ Tempo: ${tempo}`,
+            0x2ecc71
+        );
+
         return message.reply(`Produto ${produto} adicionado para <@${id}>`);
     }
 
-    // !renovar
-    if (command === '!renovar') {
-        if (!hasPermission) return;
-
-        const [ , id, produto, diasAdd ] = args;
-        const dias = parseInt(diasAdd);
-
-        let user = database.find(u => u.id === id);
-        if (!user || !user.produtos[produto]) return message.reply("Não encontrado.");
-
-        const data = new Date(user.produtos[produto].expires === "life" ? new Date() : user.produtos[produto].expires);
-        data.setDate(data.getDate() + dias);
-
-        user.produtos[produto].expires = data.toISOString();
-
-        saveDatabase(database);
-        return message.reply(`Renovado ${produto} para <@${id}>`);
-    }
-
-    // !remover
-    if (command === '!remover') {
-        if (!hasPermission) return;
-
-        const [ , id, produto ] = args;
-        let user = database.find(u => u.id === id);
-        if (!user || !user.produtos[produto]) return message.reply("Não encontrado.");
-
-        delete user.produtos[produto];
-        saveDatabase(database);
-
-        return message.reply(`Produto ${produto} removido de <@${id}>`);
-    }
-
-    // !resetarhwid
-    if (command === '!resetarhwid') {
-        if (!hasPermission) return;
-
-        const [ , id, produto ] = args;
-        let user = database.find(u => u.id === id);
-        if (!user || !user.produtos[produto]) return message.reply("Não encontrado.");
-
-        user.produtos[produto].hwid = null;
-        saveDatabase(database);
-
-        return message.reply(`HWID resetado para <@${id}>`);
-    }
-
-    // !resettodos
+    // ================= !RESETTODOS =================
     if (command === '!resettodos') {
         if (!hasPermission) return;
 
@@ -187,105 +174,14 @@ client.on('messageCreate', async (message) => {
         }
 
         saveDatabase(database);
+
+        await sendCommandLog(
+            "♻️ RESET GLOBAL DE HWID",
+            `Todos HWIDs foram resetados por <@${message.author.id}>`,
+            0xe67e22
+        );
+
         return message.reply("Todos HWIDs resetados.");
-    }
-
-    // !info
-    if (command === '!info') {
-        if (!hasPermission) return;
-
-        const id = args[1];
-        let user = database.find(u => u.id === id);
-        if (!user) return message.reply("ID não encontrado.");
-
-        user = migrateUser(user);
-
-        const discordUser = await client.users.fetch(id);
-
-        const embed = new EmbedBuilder()
-            .setTitle("🔎 Informações do Cliente")
-            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
-            .setColor(0x3498db);
-
-        for (const produto in user.produtos) {
-            const p = user.produtos[produto];
-
-            let dias = "Vitalício";
-            if (p.expires !== "life") {
-                const restante = Math.ceil((new Date(p.expires) - new Date()) / 86400000);
-                dias = restante > 0 ? restante + " dias" : "Expirado";
-            }
-
-            embed.addFields({
-                name: `📦 ${produto}`,
-                value:
-                    `⏳ ${dias}\n` +
-                    `💻 HWID: ${p.hwid || "Não definido"}\n` +
-                    `🕒 Último login: ${p.lastLogin ? new Date(p.lastLogin).toLocaleString("pt-BR") : "Nunca"}`
-            });
-        }
-
-        return message.channel.send({ embeds: [embed] });
-    }
-
-    // !listar
-    if (command === '!listar') {
-        if (!hasPermission) return;
-
-        let texto = "";
-
-        for (const user of database) {
-            texto += `\n👤 <@${user.id}>\n`;
-
-            for (const produto in user.produtos) {
-                const p = user.produtos[produto];
-
-                let dias = "Vitalício";
-                if (p.expires !== "life") {
-                    const restante = Math.ceil((new Date(p.expires) - new Date()) / 86400000);
-                    dias = restante > 0 ? restante + " dias" : "Expirado";
-                }
-
-                texto += `📦 ${produto} | ${dias}\n`;
-            }
-        }
-
-        return message.channel.send(texto || "Sem usuários.");
-    }
-
-    // !expirados
-    if (command === '!expirados') {
-        if (!hasPermission) return;
-
-        let texto = "";
-
-        for (const user of database) {
-            for (const produto in user.produtos) {
-                const p = user.produtos[produto];
-                if (p.expires !== "life" && new Date(p.expires) < new Date()) {
-                    texto += `👤 <@${user.id}> | 📦 ${produto}\n`;
-                }
-            }
-        }
-
-        return message.channel.send(texto || "Nenhum expirado.");
-    }
-
-    // !limpar_expirados
-    if (command === '!limpar_expirados') {
-        if (!hasPermission) return;
-
-        for (const user of database) {
-            for (const produto in user.produtos) {
-                const p = user.produtos[produto];
-                if (p.expires !== "life" && new Date(p.expires) < new Date()) {
-                    delete user.produtos[produto];
-                }
-            }
-        }
-
-        saveDatabase(database);
-        return message.reply("Expirados removidos.");
     }
 
 });
@@ -300,14 +196,17 @@ app.get('/check/:id/:hwid/:produto', async (req, res) => {
     let database = loadDatabase();
     let user = database.find(u => u.id === id);
 
+    const discordUser = await client.users.fetch(id).catch(() => null);
+    const username = discordUser ? discordUser.username : id;
+
     if (!user) {
         await sendLoginLog(id, produto, hwid, null, realIp, "ERRO");
         return res.send("false");
     }
 
     user = migrateUser(user);
-
     const produtoData = user.produtos[produto];
+
     if (!produtoData) {
         await sendLoginLog(id, produto, hwid, null, realIp, "ERRO");
         return res.send("false");
@@ -336,7 +235,8 @@ app.get('/check/:id/:hwid/:produto', async (req, res) => {
 
     await sendLoginLog(id, produto, hwid, dias, realIp, "SUCESSO");
 
-    return res.send(`true|${dias}|${id}`);
+    // 🔥 AGORA RETORNA O NICK
+    return res.send(`true|${dias}|${username}`);
 });
 
 // ================= START =================
