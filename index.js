@@ -106,10 +106,13 @@ client.on('messageCreate', async (message) => {
 
         let expires;
 
-        if (tempo === "life") {
+        if (tempo.toLowerCase() === "life") {
             expires = "life";
         } else {
             const dias = parseInt(tempo);
+            if (isNaN(dias) || dias <= 0)
+                return message.reply("Dias inválidos.");
+
             const data = new Date();
             data.setDate(data.getDate() + dias);
             expires = data.toISOString();
@@ -164,59 +167,88 @@ client.on('messageCreate', async (message) => {
         message.channel.send(texto || "Sem usuários.");
     }
 
-// INFO
-if (command === '!info') {
-    if (!hasPermission) return;
+    // INFO
+    if (command === '!info') {
+        if (!hasPermission) return;
 
-    const id = args[1];
-    let user = database.find(u => u.id === id);
-    if (!user) return message.reply("ID não encontrado.");
+        const id = args[1];
+        let user = database.find(u => u.id === id);
+        if (!user) return message.reply("ID não encontrado.");
 
-    user = migrateUser(user);
+        user = migrateUser(user);
 
-    let discordUser;
-    try {
-        discordUser = await client.users.fetch(id);
-    } catch {
-        return message.reply("Usuário do Discord não encontrado.");
-    }
-
-    const embed = new EmbedBuilder()
-        .setTitle("🔎 Informações do Cliente")
-        .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
-        .setColor(0x9b59b6)
-        .addFields({
-            name: "👤 Usuário",
-            value: `<@${id}>`
-        });
-
-    for (const produto in user.produtos) {
-        const p = user.produtos[produto];
-
-        let dias = "Vitalício";
-        if (p.expires !== "life") {
-            const now = new Date();
-            const expireDate = new Date(p.expires);
-            let restante = Math.ceil((expireDate - now) / 86400000);
-            if (restante < 0) restante = 0;
-            dias = restante + " dias";
+        let discordUser;
+        try {
+            discordUser = await client.users.fetch(id);
+        } catch {
+            return message.reply("Usuário do Discord não encontrado.");
         }
 
-        const ultimoLogin = p.lastLogin
-            ? new Date(p.lastLogin).toLocaleString("pt-BR")
-            : "Nunca";
+        const embed = new EmbedBuilder()
+            .setTitle("🔎 Informações do Cliente")
+            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
+            .setColor(0x9b59b6)
+            .addFields({
+                name: "👤 Usuário",
+                value: `<@${id}>`
+            });
 
-        embed.addFields({
-            name: `📦 ${produto}`,
-            value:
-                `📅 Tempo: ${dias}\n` +
-                `💻 HWID: ${p.hwid || "Não definido"}\n` +
-                `🕒 Último login: ${ultimoLogin}`
-        });
+        for (const produto in user.produtos) {
+            const p = user.produtos[produto];
+
+            let dias = "Vitalício";
+            if (p.expires !== "life") {
+                const now = new Date();
+                const expireDate = new Date(p.expires);
+                let restante = Math.ceil((expireDate - now) / 86400000);
+                if (restante < 0) restante = 0;
+                dias = restante + " dias";
+            }
+
+            const ultimoLogin = p.lastLogin
+                ? new Date(p.lastLogin).toLocaleString("pt-BR")
+                : "Nunca";
+
+            embed.addFields({
+                name: `📦 ${produto}`,
+                value:
+                    `📅 Tempo: ${dias}\n` +
+                    `💻 HWID: ${p.hwid || "Não definido"}\n` +
+                    `🕒 Último login: ${ultimoLogin}`
+            });
+        }
+
+        message.channel.send({ embeds: [embed] });
     }
 
-    message.channel.send({ embeds: [embed] });
-}
+    // RESET TODOS HWIDS
+    if (command === '!resettodos') {
+
+        if (!hasPermission)
+            return message.reply("❌ Sem permissão.");
+
+        let totalResetados = 0;
+
+        for (const user of database) {
+            migrateUser(user);
+
+            for (const produto in user.produtos) {
+                user.produtos[produto].hwid = null;
+                totalResetados++;
+            }
+        }
+
+        saveDatabase(database);
+
+        message.reply(`🔄 Todos os HWIDs foram resetados.\nTotal afetado: ${totalResetados}`);
+
+        sendLogEmbed(
+            message.author.id,
+            `🟠 RESET TODOS HWIDS`,
+            message.author.tag,
+            0xf39c12
+        );
+    }
 
     // BLACKLIST
     if (command === '!blacklist') {
