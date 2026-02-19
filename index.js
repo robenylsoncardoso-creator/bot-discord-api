@@ -40,26 +40,34 @@ function saveBlacklist(data) {
     fs.writeFileSync("blacklist.json", JSON.stringify(data, null, 2));
 }
 
-// ================= LOG EMBED =================
+// ================= MIGRAÇÃO AUTOMÁTICA =================
+
+function migrateUser(user) {
+    if (!user.produtos) {
+        user.produtos = {
+            freefire: {
+                expires: user.expires,
+                hwid: user.hwid || null,
+                lastLogin: null
+            }
+        };
+        delete user.expires;
+        delete user.hwid;
+    }
+    return user;
+}
+
+// ================= LOG =================
 
 async function sendLogEmbed(id, action, authorTag) {
     try {
         const channel = await client.channels.fetch(LOG_CHANNEL_ID);
         if (!channel) return;
 
-        let discordUser;
-        try {
-            discordUser = await client.users.fetch(id);
-        } catch {
-            return channel.send(`⚠️ ${action} | ID: ${id} | Por: ${authorTag}`);
-        }
-
         const embed = new EmbedBuilder()
             .setTitle(action)
-            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true, size: 512 }))
             .addFields(
-                { name: "👤 Usuário", value: `<@${id}>`, inline: true },
-                { name: "🆔 ID", value: id, inline: true },
+                { name: "🆔 ID", value: id },
                 { name: "👮 Executado por", value: authorTag }
             )
             .setColor(0xff9900)
@@ -68,7 +76,7 @@ async function sendLogEmbed(id, action, authorTag) {
         channel.send({ embeds: [embed] });
 
     } catch (err) {
-        console.log("Erro ao enviar log:", err);
+        console.log("Erro log:", err);
     }
 }
 
@@ -76,239 +84,80 @@ async function sendLogEmbed(id, action, authorTag) {
 
 client.on('messageCreate', async (message) => {
 
-    try {
+    if (message.author.bot) return;
+    if (!message.content.startsWith('!')) return;
+    if (message.channel.id !== ALLOWED_CHANNEL_ID) return;
 
-        if (message.author.bot) return;
-        if (!message.content.startsWith('!')) return;
-        if (message.channel.id !== ALLOWED_CHANNEL_ID) return;
+    const hasPermission =
+        message.member.roles.cache.has(ROLE_1) ||
+        message.member.roles.cache.has(ROLE_2);
 
-        const hasPermission =
-            message.member.roles.cache.has(ROLE_1) ||
-            message.member.roles.cache.has(ROLE_2);
+    const args = message.content.trim().split(/\s+/);
+    const command = args[0].toLowerCase();
 
-        const args = message.content.trim().split(/\s+/);
-        const command = args[0].toLowerCase();
+    let database = loadDatabase();
+    let blacklist = loadBlacklist();
 
-        let database = loadDatabase();
-        let blacklist = loadBlacklist();
+    // ================= ADD =================
 
-        // ================= ADD =================
+    if (command === '!add') {
 
-        if (command === '!add') {
+        if (!hasPermission)
+            return message.reply("❌ Sem permissão.");
 
-            if (!hasPermission)
-                return message.reply("❌ Sem permissão.");
+        const id = args[1];
+        const produto = args[2]?.toLowerCase();
+        const tempo = args[3];
 
-            const id = args[1];
-            const tempo = args[2];
+        if (!id || !produto || !tempo)
+            return message.reply("Use: !add ID PRODUTO DIAS ou life");
 
-            if (!id || !tempo)
-                return message.reply("Use: !add ID DIAS ou !add ID life");
+        let expires;
 
-            let expires;
+        if (tempo.toLowerCase() === "life") {
+            expires = "life";
+        } else {
+            const dias = parseInt(tempo);
+            if (isNaN(dias) || dias <= 0)
+                return message.reply("Dias inválidos.");
 
-            if (tempo.toLowerCase() === "life") {
-                expires = "life";
-            } else {
-                const dias = parseInt(tempo);
-                if (isNaN(dias)) return message.reply("Tempo inválido.");
-
-                const data = new Date();
-                data.setDate(data.getDate() + dias);
-                expires = data.toISOString();
-            }
-
-            database = database.filter(u => u.id !== id);
-
-            database.push({
-                id,
-                expires,
-                hwid: null
-            });
-
-            saveDatabase(database);
-
-            message.reply(`✅ ID ${id} adicionado.`);
-            sendLogEmbed(id, "🟢 ADD", message.author.tag);
-            return;
+            const data = new Date();
+            data.setDate(data.getDate() + dias);
+            expires = data.toISOString();
         }
 
-        // ================= LISTAR =================
+        let user = database.find(u => u.id === id);
 
-        if (command === '!listar') {
-
-            if (!hasPermission)
-                return message.reply("❌ Sem permissão.");
-
-            if (database.length === 0)
-                return message.reply("📭 Nenhum ID ativo.");
-
-            for (const user of database) {
-
-                let dias = "Vitalício";
-
-                if (user.expires !== "life") {
-                    const now = new Date();
-                    const expireDate = new Date(user.expires);
-                    let diasRestantes = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24));
-                    if (diasRestantes < 1) diasRestantes = 1;
-                    dias = `${diasRestantes} dias`;
-                }
-
-                let discordUser;
-                try {
-                    discordUser = await client.users.fetch(user.id);
-                } catch {
-                    continue;
-                }
-
-                const embed = new EmbedBuilder()
-                    .setTitle("📋 ID Ativo")
-                    .setThumbnail(discordUser.displayAvatarURL({ dynamic: true, size: 512 }))
-                    .addFields(
-                        { name: "👤 Usuário", value: `<@${user.id}>`, inline: true },
-                        { name: "🆔 ID", value: user.id, inline: true },
-                        { name: "📅 Tempo", value: dias, inline: true },
-                        { name: "💻 HWID", value: user.hwid || "Não definido" }
-                    )
-                    .setColor(0x2ecc71)
-                    .setTimestamp();
-
-                await message.channel.send({ embeds: [embed] });
-            }
-
-            return;
+        if (!user) {
+            user = { id, produtos: {} };
+            database.push(user);
         }
 
-        // ================= INFO =================
+        user = migrateUser(user);
 
-        if (command === '!info') {
+        user.produtos[produto] = {
+            expires,
+            hwid: null,
+            lastLogin: null
+        };
 
-            if (!hasPermission)
-                return message.reply("❌ Sem permissão.");
+        saveDatabase(database);
 
-            const id = args[1];
-            if (!id) return message.reply("Use: !info ID");
-
-            const user = database.find(u => u.id === id);
-            if (!user) return message.reply("ID não encontrado.");
-
-            let dias = "Vitalício";
-
-            if (user.expires !== "life") {
-                const now = new Date();
-                const expireDate = new Date(user.expires);
-                let diasRestantes = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24));
-                if (diasRestantes < 1) diasRestantes = 1;
-                dias = `${diasRestantes} dias`;
-            }
-
-            let discordUser;
-            try {
-                discordUser = await client.users.fetch(id);
-            } catch {
-                return message.reply("Usuário não encontrado.");
-            }
-
-            const embed = new EmbedBuilder()
-                .setTitle("🔎 Informações do ID")
-                .setThumbnail(discordUser.displayAvatarURL({ dynamic: true, size: 512 }))
-                .addFields(
-                    { name: "👤 Usuário", value: `<@${id}>`, inline: true },
-                    { name: "🆔 ID", value: id, inline: true },
-                    { name: "📅 Tempo", value: dias, inline: true },
-                    { name: "💻 HWID", value: user.hwid || "Não definido" }
-                )
-                .setColor(0x3498db)
-                .setTimestamp();
-
-            message.channel.send({ embeds: [embed] });
-            return;
-        }
-
-        // ================= RESETHWID =================
-
-        if (command === '!resethwid') {
-
-            if (!hasPermission)
-                return message.reply("❌ Sem permissão.");
-
-            const id = args[1];
-            if (!id) return message.reply("Use: !resethwid ID");
-
-            const user = database.find(u => u.id === id);
-            if (!user) return message.reply("ID não encontrado.");
-
-            user.hwid = null;
-            saveDatabase(database);
-
-            message.reply(`🔄 HWID resetado para ${id}`);
-            sendLogEmbed(id, "🔄 RESETHWID", message.author.tag);
-            return;
-        }
-
-        // ================= RESETTODOS =================
-
-        if (command === '!resettodos') {
-
-            if (!hasPermission)
-                return message.reply("❌ Sem permissão.");
-
-            database.forEach(u => u.hwid = null);
-            saveDatabase(database);
-
-            message.reply("🔄 Todos HWIDs foram resetados.");
-
-            const embed = new EmbedBuilder()
-                .setTitle("🔄 RESET TODOS")
-                .setDescription(`Executado por: ${message.author.tag}`)
-                .setColor(0xe74c3c)
-                .setTimestamp();
-
-            const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
-            if (logChannel) {
-                logChannel.send({ embeds: [embed] });
-            }
-
-            return;
-        }
-
-        // ================= DESAUTORIZAR =================
-
-        if (command === '!desautorizar') {
-
-            if (!hasPermission)
-                return message.reply("❌ Sem permissão.");
-
-            const id = args[1];
-            if (!id) return message.reply("Use: !desautorizar ID");
-
-            database = database.filter(u => u.id !== id);
-
-            if (!blacklist.includes(id)) {
-                blacklist.push(id);
-            }
-
-            saveDatabase(database);
-            saveBlacklist(blacklist);
-
-            message.reply(`🚫 ID ${id} desautorizado.`);
-            sendLogEmbed(id, "🔴 DESAUTORIZAR", message.author.tag);
-            return;
-        }
-
-    } catch (err) {
-        console.log("Erro em messageCreate:", err);
+        message.reply(`✅ ${id} adicionado ao produto ${produto}.`);
+        sendLogEmbed(id, `🟢 ADD (${produto})`, message.author.tag);
+        return;
     }
+
 });
 
 // ================= API CHECK =================
 
-app.get('/check/:id/:hwid', async (req, res) => {
+app.get('/check/:id/:hwid/:produto?', async (req, res) => {
 
     try {
 
         const { id, hwid } = req.params;
+        const produto = (req.params.produto || "freefire").toLowerCase();
 
         let database = loadDatabase();
         let blacklist = loadBlacklist();
@@ -316,42 +165,49 @@ app.get('/check/:id/:hwid', async (req, res) => {
         if (blacklist.includes(id))
             return res.send("pc_blocked");
 
-        const user = database.find(u => u.id === id);
+        let user = database.find(u => u.id === id);
         if (!user)
             return res.send("false");
 
-        let username = id;
+        user = migrateUser(user);
 
+        const produtoData = user.produtos[produto];
+        if (!produtoData)
+            return res.send("false");
+
+        // Buscar nickname do Discord
+        let username = id;
         try {
             const discordUser = await client.users.fetch(id);
             username = discordUser.username;
         } catch {}
 
-        if (user.expires === "life") {
+        if (produtoData.expires === "life") {
 
-            if (!user.hwid) {
-                user.hwid = hwid;
-                saveDatabase(database);
+            if (!produtoData.hwid) {
+                produtoData.hwid = hwid;
             }
 
-            if (user.hwid !== hwid)
+            if (produtoData.hwid !== hwid)
                 return res.send("pc_blocked");
+
+            produtoData.lastLogin = new Date().toISOString();
+            saveDatabase(database);
 
             return res.send(`true|9999|${username}`);
         }
 
         const now = new Date();
-        const expireDate = new Date(user.expires);
+        const expireDate = new Date(produtoData.expires);
 
         if (expireDate < now)
             return res.send("expired");
 
-        if (!user.hwid) {
-            user.hwid = hwid;
-            saveDatabase(database);
+        if (!produtoData.hwid) {
+            produtoData.hwid = hwid;
         }
 
-        if (user.hwid !== hwid)
+        if (produtoData.hwid !== hwid)
             return res.send("pc_blocked");
 
         let diasRestantes = Math.ceil(
@@ -360,15 +216,16 @@ app.get('/check/:id/:hwid', async (req, res) => {
 
         if (diasRestantes < 1) diasRestantes = 1;
 
+        produtoData.lastLogin = new Date().toISOString();
+        saveDatabase(database);
+
         return res.send(`true|${diasRestantes}|${username}`);
 
     } catch (err) {
-        console.log("Erro na API:", err);
+        console.log("Erro API:", err);
         return res.send("false");
     }
 });
-
-// ================= ROOT =================
 
 app.get('/', (req, res) => {
     res.send("Bot Online");
