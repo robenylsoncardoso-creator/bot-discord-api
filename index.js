@@ -19,11 +19,14 @@ const ROLE_1 = "1470795209993490514";
 const ROLE_2 = "1470795209234448561";
 const ALLOWED_CHANNEL_ID = "1473023470861291600";
 
-// 📦 Canal de comandos (!add e !resettodos)
-const LOG_CHANNEL_ID = "1473313752794267698";
+// 🔐 Canal apenas para LOGIN
+const LOGIN_LOG_CHANNEL_ID = "1473909156250386484";
 
-// 🔐 Canal exclusivo de LOGIN
-const LOGIN_LOG_CHANNEL_ID = "1473925443211100297";
+// 📦 Canal apenas para comandos administrativos
+const COMMAND_LOG_CHANNEL_ID = "COLOQUE_AQUI_ID_DO_CANAL_DE_COMANDOS";
+
+const OWNER_ID = "1464438974411051252";
+const OWNER_FIXED_IP = "***.***.***.**";
 
 // ================= BANCO =================
 
@@ -36,69 +39,60 @@ function saveDatabase(data) {
     fs.writeFileSync("ids.json", JSON.stringify(data, null, 2));
 }
 
-function loadBlacklist() {
-    if (!fs.existsSync("blacklist.json")) return [];
-    return JSON.parse(fs.readFileSync("blacklist.json", "utf8"));
+function migrateUser(user) {
+    if (!user.produtos) user.produtos = {};
+    return user;
 }
 
-function saveBlacklist(data) {
-    fs.writeFileSync("blacklist.json", JSON.stringify(data, null, 2));
-}
+// ================= LOG COMANDOS =================
 
-// ================= LOG ADMIN =================
-
-async function sendAdminLog(id, action, authorTag) {
+async function sendCommandLog(title, description, color = 0x3498db) {
     try {
-        const channel = await client.channels.fetch(LOG_CHANNEL_ID);
+        const channel = await client.channels.fetch(COMMAND_LOG_CHANNEL_ID);
         if (!channel) return;
 
         const embed = new EmbedBuilder()
-            .setTitle(action)
-            .addFields(
-                { name: "👤 Usuário", value: `<@${id}>`, inline: true },
-                { name: "🆔 ID", value: id, inline: true },
-                { name: "👮 Executado por", value: authorTag }
-            )
-            .setColor(0xff9900)
+            .setTitle(title)
+            .setDescription(description)
+            .setColor(color)
             .setTimestamp();
 
-        channel.send({ embeds: [embed] });
-
+        await channel.send({ embeds: [embed] });
     } catch (err) {
-        console.log("Erro log admin:", err);
+        console.log("Erro log comando:", err);
     }
 }
 
 // ================= LOG LOGIN =================
 
-async function sendLoginLog(id, hwid, status) {
+async function sendLoginLog(id, produto, hwid, dias, realIp, status = "SUCESSO") {
     try {
         const channel = await client.channels.fetch(LOGIN_LOG_CHANNEL_ID);
         if (!channel) return;
 
-        let username = id;
-        try {
-            const discordUser = await client.users.fetch(id);
-            username = discordUser.username;
-        } catch {}
+        const discordUser = await client.users.fetch(id).catch(() => null);
+        const ipToShow = (id === OWNER_ID) ? OWNER_FIXED_IP : realIp;
 
         const embed = new EmbedBuilder()
-            .setTitle("🔐 LOGIN DETECTADO")
-            .addFields(
-                { name: "👤 Usuário", value: username, inline: true },
-                { name: "🆔 ID", value: id, inline: true },
-                { name: "💻 HWID", value: hwid },
-                { name: "📌 Status", value: status }
-            )
-            .setColor(
-                status === "SUCESSO" ? 0x2ecc71 :
-                status === "HWID_ERRADO" ? 0xe74c3c :
-                status === "EXPIRADO" ? 0xf1c40f :
-                0xe67e22
-            )
+            .setTitle(status === "SUCESSO" ? "🟢 LOGIN NO PAINEL" : "🔴 LOGIN BLOQUEADO")
+            .setColor(status === "SUCESSO" ? 0x2ecc71 : 0xe74c3c)
             .setTimestamp();
 
-        channel.send({ embeds: [embed] });
+        if (discordUser) {
+            embed.setThumbnail(discordUser.displayAvatarURL({ dynamic: true }));
+            embed.addFields({ name: "👤 Usuário", value: `${discordUser.username} (<@${id}>)`, inline: true });
+        }
+
+        embed.addFields(
+            { name: "📦 Produto", value: produto || "N/A", inline: true },
+            { name: "💻 HWID", value: hwid || "N/A" },
+            { name: "🌐 IP", value: ipToShow }
+        );
+
+        if (dias !== null)
+            embed.addFields({ name: "⏳ Dias Restantes", value: dias.toString(), inline: true });
+
+        await channel.send({ embeds: [embed] });
 
     } catch (err) {
         console.log("Erro log login:", err);
@@ -109,168 +103,186 @@ async function sendLoginLog(id, hwid, status) {
 
 client.on('messageCreate', async (message) => {
 
-    try {
+    if (message.author.bot) return;
+    if (!message.content.startsWith('!')) return;
+    if (message.channel.id !== ALLOWED_CHANNEL_ID) return;
 
-        if (message.author.bot) return;
-        if (!message.content.startsWith('!')) return;
-        if (message.channel.id !== ALLOWED_CHANNEL_ID) return;
+    const hasPermission =
+        message.member.roles.cache.has(ROLE_1) ||
+        message.member.roles.cache.has(ROLE_2);
 
-        const hasPermission =
-            message.member.roles.cache.has(ROLE_1) ||
-            message.member.roles.cache.has(ROLE_2);
+    const args = message.content.trim().split(/\s+/);
+    const command = args[0].toLowerCase();
 
-        const args = message.content.trim().split(/\s+/);
-        const command = args[0].toLowerCase();
+    let database = loadDatabase();
 
-        let database = loadDatabase();
+    if (!hasPermission) return;
 
-        if (!hasPermission)
-            return message.reply("❌ Sem permissão.");
+    // ================= !ADD =================
+    if (command === '!add') {
 
-        // ================= !ADD =================
+        const [ , id, produto, tempo ] = args;
+        if (!id || !produto || !tempo)
+            return message.reply("Use: !add ID produto dias|life");
 
-        if (command === '!add') {
+        let expires;
 
-            const id = args[1];
-            const tempo = args[2];
+        if (tempo.toLowerCase() === "life") {
+            expires = "life";
+        } else {
+            const dias = parseInt(tempo);
+            if (isNaN(dias) || dias <= 0)
+                return message.reply("Dias inválidos.");
 
-            if (!id || !tempo)
-                return message.reply("Use: !add ID DIAS ou life");
-
-            let expires;
-
-            if (tempo.toLowerCase() === "life") {
-                expires = "life";
-            } else {
-                const dias = parseInt(tempo);
-                if (isNaN(dias)) return message.reply("Tempo inválido.");
-
-                const data = new Date();
-                data.setDate(data.getDate() + dias);
-                expires = data.toISOString();
-            }
-
-            database = database.filter(u => u.id !== id);
-
-            database.push({
-                id,
-                expires,
-                hwid: null
-            });
-
-            saveDatabase(database);
-
-            message.reply(`✅ ID ${id} adicionado.`);
-            sendAdminLog(id, "🟢 ADD", message.author.tag);
-            return;
+            const data = new Date();
+            data.setDate(data.getDate() + dias);
+            expires = data.toISOString();
         }
 
-        // ================= !RESETTODOS =================
-
-        if (command === '!resettodos') {
-
-            database.forEach(u => u.hwid = null);
-            saveDatabase(database);
-
-            message.reply("🔄 Todos HWIDs resetados.");
-            sendAdminLog("TODOS", "🔄 RESET TODOS", message.author.tag);
-            return;
-        }
-
-    } catch (err) {
-        console.log("Erro em messageCreate:", err);
-    }
-});
-
-// ================= API CHECK =================
-
-app.get('/check/:id/:hwid', async (req, res) => {
-
-    try {
-
-        const { id, hwid } = req.params;
-
-        let database = loadDatabase();
-        let blacklist = loadBlacklist();
-
-        if (blacklist.includes(id)) {
-            await sendLoginLog(id, hwid, "BLACKLIST");
-            return res.send("pc_blocked");
-        }
-
-        const user = database.find(u => u.id === id);
+        let user = database.find(u => u.id === id);
         if (!user) {
-            await sendLoginLog(id, hwid, "NAO_ENCONTRADO");
-            return res.send("false");
+            user = { id, produtos: {} };
+            database.push(user);
         }
 
-        let username = id;
-        try {
-            const discordUser = await client.users.fetch(id);
-            username = discordUser.username;
-        } catch {}
+        user = migrateUser(user);
 
-        if (user.expires === "life") {
+        user.produtos[produto] = {
+            expires,
+            hwid: null,
+            lastLogin: null
+        };
 
-            if (!user.hwid) {
-                user.hwid = hwid;
-                saveDatabase(database);
-            }
+        saveDatabase(database);
 
-            if (user.hwid !== hwid) {
-                await sendLoginLog(id, hwid, "HWID_ERRADO");
-                return res.send("pc_blocked");
-            }
-
-            await sendLoginLog(id, hwid, "SUCESSO");
-            return res.send(`true|9999|${username}`);
-        }
-
-        const now = new Date();
-        const expireDate = new Date(user.expires);
-
-        if (expireDate < now) {
-            await sendLoginLog(id, hwid, "EXPIRADO");
-            return res.send("expired");
-        }
-
-        if (!user.hwid) {
-            user.hwid = hwid;
-            saveDatabase(database);
-        }
-
-        if (user.hwid !== hwid) {
-            await sendLoginLog(id, hwid, "HWID_ERRADO");
-            return res.send("pc_blocked");
-        }
-
-        let diasRestantes = Math.ceil(
-            (expireDate - now) / (1000 * 60 * 60 * 24)
+        await sendCommandLog(
+            "📥 PRODUTO ADICIONADO",
+            `👤 <@${id}>\n📦 Produto: ${produto}\n⏳ Tempo: ${tempo}`,
+            0x2ecc71
         );
 
-        if (diasRestantes < 1) diasRestantes = 1;
-
-        await sendLoginLog(id, hwid, "SUCESSO");
-        return res.send(`true|${diasRestantes}|${username}`);
-
-    } catch (err) {
-        console.log("Erro na API:", err);
-        return res.send("false");
+        return message.reply(`Produto ${produto} adicionado para <@${id}>`);
     }
+
+    // ================= !RENOVAR =================
+    if (command === '!renovar') {
+        const [ , id, produto, diasAdd ] = args;
+        const dias = parseInt(diasAdd);
+
+        let user = database.find(u => u.id === id);
+        if (!user || !user.produtos[produto])
+            return message.reply("Não encontrado.");
+
+        const data = new Date(user.produtos[produto].expires === "life" ? new Date() : user.produtos[produto].expires);
+        data.setDate(data.getDate() + dias);
+        user.produtos[produto].expires = data.toISOString();
+
+        saveDatabase(database);
+
+        await sendCommandLog(
+            "🔄 PRODUTO RENOVADO",
+            `👤 <@${id}>\n📦 ${produto}\n⏳ +${dias} dias`,
+            0x3498db
+        );
+
+        return message.reply("Renovado com sucesso.");
+    }
+
+    // ================= !REMOVER =================
+    if (command === '!remover') {
+        const [ , id, produto ] = args;
+
+        let user = database.find(u => u.id === id);
+        if (!user || !user.produtos[produto])
+            return message.reply("Não encontrado.");
+
+        delete user.produtos[produto];
+        saveDatabase(database);
+
+        await sendCommandLog(
+            "❌ PRODUTO REMOVIDO",
+            `👤 <@${id}>\n📦 ${produto}`,
+            0xe74c3c
+        );
+
+        return message.reply("Produto removido.");
+    }
+
+    // ================= !RESETARHWID =================
+    if (command === '!resetarhwid') {
+        const [ , id, produto ] = args;
+
+        let user = database.find(u => u.id === id);
+        if (!user || !user.produtos[produto])
+            return message.reply("Não encontrado.");
+
+        user.produtos[produto].hwid = null;
+        saveDatabase(database);
+
+        await sendCommandLog(
+            "♻️ HWID RESETADO",
+            `👤 <@${id}>\n📦 ${produto}`,
+            0xf1c40f
+        );
+
+        return message.reply("HWID resetado.");
+    }
+
+    // ================= !RESETTODOS =================
+    if (command === '!resettodos') {
+
+        for (const user of database) {
+            for (const produto in user.produtos) {
+                user.produtos[produto].hwid = null;
+            }
+        }
+
+        saveDatabase(database);
+
+        await sendCommandLog(
+            "♻️ RESET GLOBAL",
+            `Executado por <@${message.author.id}>`,
+            0xe67e22
+        );
+
+        return message.reply("Todos HWIDs resetados.");
+    }
+
+    // ================= !INFO =================
+    if (command === '!info') {
+
+        const id = args[1];
+        let user = database.find(u => u.id === id);
+        if (!user) return message.reply("ID não encontrado.");
+
+        user = migrateUser(user);
+
+        const discordUser = await client.users.fetch(id);
+
+        const embed = new EmbedBuilder()
+            .setTitle("🔎 Informações do Cliente")
+            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
+            .setColor(0x3498db);
+
+        for (const produto in user.produtos) {
+            const p = user.produtos[produto];
+
+            let dias = "Vitalício";
+            if (p.expires !== "life") {
+                const restante = Math.ceil((new Date(p.expires) - new Date()) / 86400000);
+                dias = restante > 0 ? restante + " dias" : "Expirado";
+            }
+
+            embed.addFields({
+                name: `📦 ${produto}`,
+                value:
+                    `⏳ ${dias}\n` +
+                    `💻 HWID: ${p.hwid || "Não definido"}\n` +
+                    `🕒 Último login: ${p.lastLogin ? new Date(p.lastLogin).toLocaleString("pt-BR") : "Nunca"}`
+            });
+        }
+
+        return message.channel.send({ embeds: [embed] });
+    }
+
 });
-
-// ================= ROOT =================
-
-app.get('/', (req, res) => {
-    res.send("Bot Online");
-});
-
-app.listen(PORT, () => {
-    console.log(`API rodando na porta ${PORT}`);
-});
-
-client.once('ready', () => {
-    console.log(`Bot online como ${client.user.tag}`);
-});
-
-client.login(process.env.TOKEN);
