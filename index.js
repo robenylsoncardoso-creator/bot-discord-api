@@ -40,8 +40,6 @@ function saveBlacklist(data) {
     fs.writeFileSync("blacklist.json", JSON.stringify(data, null, 2));
 }
 
-// ================= MIGRAÇÃO AUTOMÁTICA =================
-
 function migrateUser(user) {
     if (!user.produtos) {
         user.produtos = {
@@ -59,24 +57,29 @@ function migrateUser(user) {
 
 // ================= LOG =================
 
-async function sendLogEmbed(id, action, authorTag) {
+async function sendLogEmbed(id, action, authorTag, color = 0x2ecc71) {
+
+    const channel = await client.channels.fetch(LOG_CHANNEL_ID);
+    if (!channel) return;
+
     try {
-        const channel = await client.channels.fetch(LOG_CHANNEL_ID);
-        if (!channel) return;
+        const discordUser = await client.users.fetch(id);
 
         const embed = new EmbedBuilder()
             .setTitle(action)
+            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
             .addFields(
-                { name: "🆔 ID", value: id },
+                { name: "👤 Usuário", value: `<@${id}>`, inline: true },
+                { name: "🆔 ID", value: id, inline: true },
                 { name: "👮 Executado por", value: authorTag }
             )
-            .setColor(0xff9900)
+            .setColor(color)
             .setTimestamp();
 
         channel.send({ embeds: [embed] });
 
-    } catch (err) {
-        console.log("Erro log:", err);
+    } catch {
+        channel.send(`⚠️ ${action} | ID: ${id} | Por: ${authorTag}`);
     }
 }
 
@@ -102,8 +105,7 @@ client.on('messageCreate', async (message) => {
 
     if (command === '!add') {
 
-        if (!hasPermission)
-            return message.reply("❌ Sem permissão.");
+        if (!hasPermission) return message.reply("❌ Sem permissão.");
 
         const id = args[1];
         const produto = args[2]?.toLowerCase();
@@ -127,7 +129,6 @@ client.on('messageCreate', async (message) => {
         }
 
         let user = database.find(u => u.id === id);
-
         if (!user) {
             user = { id, produtos: {} };
             database.push(user);
@@ -143,92 +144,150 @@ client.on('messageCreate', async (message) => {
 
         saveDatabase(database);
 
-        message.reply(`✅ ${id} adicionado ao produto ${produto}.`);
-        sendLogEmbed(id, `🟢 ADD (${produto})`, message.author.tag);
+        message.reply(`✅ Produto ${produto} adicionado para <@${id}>`);
+        sendLogEmbed(id, `🟢 ADD (${produto})`, message.author.tag, 0x2ecc71);
+        return;
+    }
+
+    // ================= RENOVAR =================
+
+    if (command === '!renovar') {
+
+        if (!hasPermission) return;
+
+        const id = args[1];
+        const produto = args[2]?.toLowerCase();
+        const dias = parseInt(args[3]);
+
+        let user = database.find(u => u.id === id);
+        if (!user || !user.produtos[produto])
+            return message.reply("Produto não encontrado.");
+
+        const atual = user.produtos[produto].expires;
+
+        let novaData = new Date();
+        if (atual !== "life")
+            novaData = new Date(atual);
+
+        novaData.setDate(novaData.getDate() + dias);
+        user.produtos[produto].expires = novaData.toISOString();
+
+        saveDatabase(database);
+
+        message.reply(`🔄 Renovado ${produto} de <@${id}>`);
+        sendLogEmbed(id, `🔵 RENOVAR (${produto})`, message.author.tag, 0x3498db);
+        return;
+    }
+
+    // ================= REMOVER =================
+
+    if (command === '!remover') {
+
+        if (!hasPermission) return;
+
+        const id = args[1];
+        const produto = args[2]?.toLowerCase();
+
+        let user = database.find(u => u.id === id);
+        if (!user || !user.produtos[produto])
+            return message.reply("Produto não encontrado.");
+
+        delete user.produtos[produto];
+
+        saveDatabase(database);
+
+        message.reply(`❌ Produto ${produto} removido de <@${id}>`);
+        sendLogEmbed(id, `🔴 REMOVER (${produto})`, message.author.tag, 0xe74c3c);
+        return;
+    }
+
+    // ================= INFO =================
+
+    if (command === '!info') {
+
+        if (!hasPermission) return;
+
+        const id = args[1];
+        let user = database.find(u => u.id === id);
+        if (!user) return message.reply("ID não encontrado.");
+
+        user = migrateUser(user);
+
+        const discordUser = await client.users.fetch(id);
+
+        const embed = new EmbedBuilder()
+            .setTitle("🔎 Informações do Cliente")
+            .setThumbnail(discordUser.displayAvatarURL({ dynamic: true }))
+            .setColor(0x9b59b6)
+            .addFields({ name: "👤 Usuário", value: `<@${id}>` });
+
+        for (const produto in user.produtos) {
+
+            const p = user.produtos[produto];
+
+            let dias = "Vitalício";
+            if (p.expires !== "life") {
+                const now = new Date();
+                const expireDate = new Date(p.expires);
+                dias = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24)) + " dias";
+            }
+
+            embed.addFields({
+                name: `📦 ${produto}`,
+                value:
+                    `📅 Tempo: ${dias}\n` +
+                    `💻 HWID: ${p.hwid || "Não definido"}\n` +
+                    `🕒 Último Login: ${p.lastLogin ? new Date(p.lastLogin).toLocaleString("pt-BR") : "Nunca"}`
+            });
+        }
+
+        message.channel.send({ embeds: [embed] });
         return;
     }
 
 });
 
-// ================= API CHECK =================
+// ================= API =================
 
 app.get('/check/:id/:hwid/:produto', async (req, res) => {
 
-    try {
+    const { id, hwid, produto } = req.params;
 
-        const { id, hwid } = req.params;
-        const produto = (req.params.produto || "freefire").toLowerCase();
+    let database = loadDatabase();
+    let blacklist = loadBlacklist();
 
-        let database = loadDatabase();
-        let blacklist = loadBlacklist();
+    if (blacklist.includes(id))
+        return res.send("pc_blocked");
 
-        if (blacklist.includes(id))
-            return res.send("pc_blocked");
+    let user = database.find(u => u.id === id);
+    if (!user) return res.send("false");
 
-        let user = database.find(u => u.id === id);
-        if (!user)
-            return res.send("false");
+    user = migrateUser(user);
 
-        user = migrateUser(user);
+    const produtoData = user.produtos[produto];
+    if (!produtoData) return res.send("false");
 
-        const produtoData = user.produtos[produto];
-        if (!produtoData)
-            return res.send("false");
+    if (!produtoData.hwid)
+        produtoData.hwid = hwid;
 
-        // Buscar nickname do Discord
-        let username = id;
-        try {
-            const discordUser = await client.users.fetch(id);
-            username = discordUser.username;
-        } catch {}
+    if (produtoData.hwid !== hwid)
+        return res.send("pc_blocked");
 
-        if (produtoData.expires === "life") {
+    produtoData.lastLogin = new Date().toISOString();
+    saveDatabase(database);
 
-            if (!produtoData.hwid) {
-                produtoData.hwid = hwid;
-            }
+    if (produtoData.expires === "life")
+        return res.send(`true|9999|${id}`);
 
-            if (produtoData.hwid !== hwid)
-                return res.send("pc_blocked");
+    const now = new Date();
+    const expireDate = new Date(produtoData.expires);
 
-            produtoData.lastLogin = new Date().toISOString();
-            saveDatabase(database);
+    if (expireDate < now)
+        return res.send("expired");
 
-            return res.send(`true|9999|${username}`);
-        }
+    const dias = Math.ceil((expireDate - now) / (1000 * 60 * 60 * 24));
 
-        const now = new Date();
-        const expireDate = new Date(produtoData.expires);
-
-        if (expireDate < now)
-            return res.send("expired");
-
-        if (!produtoData.hwid) {
-            produtoData.hwid = hwid;
-        }
-
-        if (produtoData.hwid !== hwid)
-            return res.send("pc_blocked");
-
-        let diasRestantes = Math.ceil(
-            (expireDate - now) / (1000 * 60 * 60 * 24)
-        );
-
-        if (diasRestantes < 1) diasRestantes = 1;
-
-        produtoData.lastLogin = new Date().toISOString();
-        saveDatabase(database);
-
-        return res.send(`true|${diasRestantes}|${username}`);
-
-    } catch (err) {
-        console.log("Erro API:", err);
-        return res.send("false");
-    }
-});
-
-app.get('/', (req, res) => {
-    res.send("Bot Online");
+    return res.send(`true|${dias}|${id}`);
 });
 
 app.listen(PORT, () => {
