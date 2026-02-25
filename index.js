@@ -8,16 +8,22 @@ app.use(express.json());
 const TOKEN = process.env.TOKEN;
 
 /* CONFIG */
-const PREFIX = "!";
-const LOG_GERAR = "1473925443211100297";
+const CANAL_COMANDOS = "1476230921165340682";
+
+const LOG_GERAR = "1476230827972235420";
 const LOG_RESET = "1476230874126352455";
+const LOG_LOGIN = "1476230921165340682";
 
 /* BOT */
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
 });
 
-/* GERAR KEY */
+/* GERADOR KEY */
 function gerarKey() {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let key = "";
@@ -30,7 +36,7 @@ function gerarKey() {
     return key;
 }
 
-/* CARREGAR JSON */
+/* JSON */
 function loadKeys() {
     return JSON.parse(fs.readFileSync("keys.json"));
 }
@@ -47,6 +53,7 @@ client.once("ready", () => {
 /* COMANDOS */
 client.on("messageCreate", async (msg) => {
 
+    if (msg.channel.id !== CANAL_COMANDOS) return;
     if (!msg.content.startsWith(PREFIX)) return;
 
     const args = msg.content.slice(PREFIX.length).trim().split(" ");
@@ -65,12 +72,12 @@ client.on("messageCreate", async (msg) => {
 
         const key = gerarKey();
 
-        const expire = Date.now() + (dias * 86400000);
-
         data.keys.push({
             key,
-            expire,
-            hwid: null
+            dias,
+            expire: null,
+            hwid: null,
+            ativada: false
         });
 
         saveKeys(data);
@@ -79,7 +86,7 @@ client.on("messageCreate", async (msg) => {
 
         const canal = client.channels.cache.get(LOG_GERAR);
         if (canal)
-            canal.send(`Key gerada\nKey: ${key}\nDias: ${dias}\nPor: ${msg.author.tag}`);
+            canal.send(`KEY GERADA\nKey: ${key}\nDias: ${dias}\nPor: ${msg.author.tag}`);
     }
 
     /* RESET KEY */
@@ -97,47 +104,65 @@ client.on("messageCreate", async (msg) => {
         if (!found) return msg.reply("Key não encontrada.");
 
         found.hwid = null;
+        found.ativada = false;
+        found.expire = null;
 
         saveKeys(data);
 
-        msg.reply("HWID resetado.");
+        msg.reply("Key resetada.");
 
         const canal = client.channels.cache.get(LOG_RESET);
         if (canal)
-            canal.send(`Reset HWID\nKey: ${key}\nPor: ${msg.author.tag}`);
+            canal.send(`RESET KEY\nKey: ${key}\nPor: ${msg.author.tag}`);
     }
-
 });
 
 /* ================= API ================= */
 
-/* VALIDAR KEY */
+/* LOGIN */
 app.post("/login", (req, res) => {
 
     const { key, hwid } = req.body;
 
     let data = loadKeys();
-
     let found = data.keys.find(k => k.key === key);
 
     if (!found)
         return res.json({ status: "invalid" });
 
+    /* PRIMEIRO LOGIN */
+    if (!found.ativada) {
+
+        found.hwid = hwid;
+        found.ativada = true;
+        found.expire = Date.now() + (found.dias * 86400000);
+
+        saveKeys(data);
+
+        const canal = client.channels.cache.get(LOG_LOGIN);
+        if (canal)
+            canal.send(`PRIMEIRO LOGIN\nKey: ${key}\nHWID: ${hwid}`);
+
+        return res.json({ status: "success" });
+    }
+
+    /* KEY EXPIRADA */
     if (Date.now() > found.expire)
         return res.json({ status: "expired" });
 
-    if (found.hwid == null) {
-        found.hwid = hwid;
-        saveKeys(data);
-    }
-
+    /* HWID ERRADO */
     if (found.hwid !== hwid)
         return res.json({ status: "hwid_mismatch" });
+
+    /* LOGIN NORMAL */
+    const canal = client.channels.cache.get(LOG_LOGIN);
+    if (canal)
+        canal.send(`LOGIN\nKey: ${key}\nHWID: ${hwid}`);
 
     res.json({ status: "success" });
 });
 
-/* SERVER */
+/* API */
 app.listen(3000, () => {
     console.log("API ONLINE");
 });
