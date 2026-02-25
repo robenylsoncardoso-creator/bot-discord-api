@@ -10,8 +10,8 @@ const API_KEY = process.env.API_KEY;
 
 const PREFIX = "!";
 
+/* IDS DOS CANAIS */
 const CANAL_COMANDOS = "1476230827972235420";
-
 const LOG_GERAR = "1473925443211100297";
 const LOG_RESET = "1476230921165340682";
 const LOG_LOGIN = "1476230874126352455";
@@ -24,20 +24,24 @@ const client = new Client({
     ]
 });
 
-/* GERAR KEY */
+/* =======================
+   GERAR KEY
+======================= */
 function gerarKey() {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let key = "";
 
     for (let i = 0; i < 20; i++) {
         key += chars[Math.floor(Math.random() * chars.length)];
-        if ((i + 1) % 5 == 0 && i != 19) key += "-";
+        if ((i + 1) % 5 === 0 && i !== 19) key += "-";
     }
 
     return key;
 }
 
-/* JSON */
+/* =======================
+   JSON DATABASE
+======================= */
 function loadKeys() {
 
     if (!fs.existsSync("keys.json")) {
@@ -51,11 +55,16 @@ function saveKeys(data) {
     fs.writeFileSync("keys.json", JSON.stringify(data, null, 2));
 }
 
+/* =======================
+   READY
+======================= */
 client.once("ready", () => {
     console.log("BOT ONLINE");
 });
 
-/* COMANDOS */
+/* =======================
+   COMANDOS DISCORD
+======================= */
 client.on("messageCreate", async (msg) => {
 
     if (msg.channel.id !== CANAL_COMANDOS) return;
@@ -64,6 +73,7 @@ client.on("messageCreate", async (msg) => {
     const args = msg.content.slice(PREFIX.length).trim().split(" ");
     const cmd = args.shift().toLowerCase();
 
+    /* GERAR KEY */
     if (cmd === "gerarkey") {
 
         if (!msg.member.permissions.has("Administrator"))
@@ -73,7 +83,6 @@ client.on("messageCreate", async (msg) => {
         if (!dias) return msg.reply("Use: !gerarkey 7");
 
         let data = loadKeys();
-
         const key = gerarKey();
 
         data.keys.push({
@@ -86,13 +95,14 @@ client.on("messageCreate", async (msg) => {
 
         saveKeys(data);
 
-        msg.reply("Key criada:\n```" + key + "```");
+        msg.reply("KEY CRIADA:\n```" + key + "```");
 
         const canal = client.channels.cache.get(LOG_GERAR);
         if (canal)
             canal.send(`KEY GERADA\nKey: ${key}\nDias: ${dias}\nPor: ${msg.author.tag}`);
     }
 
+    /* RESET KEY */
     if (cmd === "resetkey") {
 
         if (!msg.member.permissions.has("Administrator"))
@@ -103,7 +113,7 @@ client.on("messageCreate", async (msg) => {
 
         let data = loadKeys();
 
-        let found = data.keys.find(k => k.key === key);
+        let found = data.keys.find(k => k.key === key.toUpperCase());
         if (!found) return msg.reply("Key não encontrada.");
 
         found.hwid = null;
@@ -120,7 +130,9 @@ client.on("messageCreate", async (msg) => {
     }
 });
 
-/* LOGIN API */
+/* =======================
+   API LOGIN
+======================= */
 app.post("/login", (req, res) => {
 
     const { key, hwid, api } = req.body;
@@ -128,12 +140,18 @@ app.post("/login", (req, res) => {
     if (api !== API_KEY)
         return res.json({ status: "unauthorized" });
 
+    if (!key || !hwid)
+        return res.json({ status: "invalid" });
+
+    const keyInput = key.trim().toUpperCase();
+
     let data = loadKeys();
-    let found = data.keys.find(k => k.key === key);
+    let found = data.keys.find(k => k.key === keyInput);
 
     if (!found)
         return res.json({ status: "invalid" });
 
+    /* PRIMEIRO LOGIN */
     if (!found.ativada) {
 
         found.hwid = hwid;
@@ -144,24 +162,29 @@ app.post("/login", (req, res) => {
 
         const canal = client.channels.cache.get(LOG_LOGIN);
         if (canal)
-            canal.send(`PRIMEIRO LOGIN\nKey: ${key}\nHWID: ${hwid}`);
+            canal.send(`PRIMEIRO LOGIN\nKey: ${keyInput}\nHWID: ${hwid}`);
 
         return res.json({ status: "success" });
     }
 
+    /* EXPIRADA */
     if (Date.now() > found.expire)
         return res.json({ status: "expired" });
 
+    /* HWID DIFERENTE */
     if (found.hwid !== hwid)
         return res.json({ status: "hwid_mismatch" });
 
     const canal = client.channels.cache.get(LOG_LOGIN);
     if (canal)
-        canal.send(`LOGIN\nKey: ${key}\nHWID: ${hwid}`);
+        canal.send(`LOGIN\nKey: ${keyInput}\nHWID: ${hwid}`);
 
     res.json({ status: "success" });
 });
 
+/* =======================
+   START API
+======================= */
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
